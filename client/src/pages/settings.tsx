@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import {
   User,
   Mail,
@@ -17,14 +20,10 @@ import {
   Users,
   Database,
   Loader2,
+  RefreshCw,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
-
-const integrations = [
-  { name: "Gmail", icon: Mail, connected: true, description: "Sync emails and calendar" },
-  { name: "LinkedIn", icon: Linkedin, connected: true, description: "Import candidates and send InMails" },
-  { name: "Calendar", icon: Calendar, connected: true, description: "Interview scheduling" },
-  { name: "Loxo", icon: Link2, connected: true, description: "Talent intelligence and sourcing" },
-];
 
 const comingSoonIntegrations = [
   { name: "LinkedIn Recruiter", description: "Advanced recruiter seat integration" },
@@ -33,45 +32,159 @@ const comingSoonIntegrations = [
   { name: "Mailchimp", description: "Email campaign management" },
 ];
 
+interface SyncStatus {
+  lastSync: string | null;
+  candidatesSynced: number;
+  jobsSynced: number;
+  isRunning: boolean;
+}
+
 export default function Settings() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   // Loxo state
   const [loxoApiKey, setLoxoApiKey] = useState("");
   const [loxoSlug, setLoxoSlug] = useState("the-hiring-advisors-1");
+  const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
-  const [syncStep, setSyncStep] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; totalPeople?: number } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(0);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
-  function handleTestConnection() {
-    setIsTesting(true);
-    setTimeout(() => {
-      setIsTesting(false);
-      toast({
-        title: "Connection successful!",
-        description: "Found 1,247 candidates in your Loxo database.",
+  // Load sync status on mount
+  useEffect(() => {
+    loadSyncStatus();
+  }, []);
+
+  async function loadSyncStatus() {
+    try {
+      const data = await apiRequest("GET", "/api/loxo/status");
+      const status = await data.json();
+      setSyncStatus(status);
+    } catch (_) {}
+  }
+
+  async function handleSaveCredentials() {
+    if (!loxoApiKey.trim()) {
+      toast({ title: "API key required", variant: "destructive" });
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await apiRequest("POST", "/api/loxo/credentials", {
+        apiKey: loxoApiKey.trim(),
+        slug: loxoSlug.trim(),
       });
-    }, 1400);
+      toast({ title: "Credentials saved", description: "Your Loxo API key has been stored securely." });
+    } catch (e: any) {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleTestConnection() {
+    // If no key entered yet, still try to test with saved key
+    if (!loxoApiKey.trim()) {
+      // Try to test with whatever is already saved
+    }
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      // Save first if key is present
+      if (loxoApiKey.trim()) {
+        await apiRequest("POST", "/api/loxo/credentials", {
+          apiKey: loxoApiKey.trim(),
+          slug: loxoSlug.trim(),
+        });
+      }
+      const r = await apiRequest("GET", "/api/loxo/test");
+      const data = await r.json();
+      if (data.ok) {
+        setTestResult({ ok: true, totalPeople: data.totalPeople });
+        toast({
+          title: "Connected!",
+          description: `Found ${data.totalPeople?.toLocaleString()} people in your Loxo database.`,
+        });
+      } else {
+        setTestResult({ ok: false });
+        toast({ title: "Connection failed", description: data.error, variant: "destructive" });
+      }
+    } catch (e: any) {
+      setTestResult({ ok: false });
+      toast({ title: "Connection error", description: e.message, variant: "destructive" });
+    } finally {
+      setIsTesting(false);
+    }
   }
 
   async function handleSyncNow() {
     setIsSyncing(true);
-    const steps = [
-      "Syncing candidates...",
-      "Syncing jobs...",
-      "Syncing activities...",
-      "Sync complete!",
-    ];
-    for (let i = 0; i < steps.length; i++) {
-      setSyncStep(steps[i]);
-      await new Promise((res) => setTimeout(res, 900));
+    setSyncProgress(0);
+    setSyncMessage("Starting sync...");
+
+    try {
+      // Use EventSource for SSE streaming progress
+      const baseUrl = (window as any).__PORT_5000__
+        ? `${(window as any).__PORT_5000__}`
+        : "";
+      const url = `${baseUrl}/api/loxo/sync`;
+
+      const eventSource = new EventSource(url);
+
+      await new Promise<void>((resolve, reject) => {
+        eventSource.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.error) {
+              setSyncMessage(`Error: ${msg.error}`);
+              eventSource.close();
+              reject(new Error(msg.error));
+              return;
+            }
+            if (msg.progress !== undefined) setSyncProgress(msg.progress);
+            if (msg.message) setSyncMessage(msg.message);
+            if (msg.phase === "complete") {
+              setSyncStatus({
+                lastSync: new Date().toISOString(),
+                candidatesSynced: msg.candidatesSynced,
+                jobsSynced: msg.jobsSynced,
+                isRunning: false,
+              });
+              eventSource.close();
+              resolve();
+            }
+          } catch (_) {}
+        };
+        eventSource.onerror = () => {
+          eventSource.close();
+          resolve(); // Connection closed after stream ends — treat as done
+        };
+      });
+
+      // Invalidate all data caches so the app reloads with real data
+      queryClient.invalidateQueries({ queryKey: ["/api/candidates"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+
+      toast({
+        title: "Sync complete!",
+        description: `${syncStatus?.candidatesSynced ?? ""} candidates and ${syncStatus?.jobsSynced ?? ""} jobs imported from Loxo.`,
+      });
+    } catch (e: any) {
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    } finally {
+      setIsSyncing(false);
     }
-    setIsSyncing(false);
-    setSyncStep(null);
-    toast({
-      title: "Sync complete!",
-      description: "All Loxo data has been synchronized successfully.",
-    });
+  }
+
+  function formatLastSync(iso: string | null) {
+    if (!iso) return "Never";
+    const d = new Date(iso);
+    return d.toLocaleString();
   }
 
   return (
@@ -127,6 +240,7 @@ export default function Settings() {
           <CardTitle className="text-sm font-semibold">Integrations</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+
           {/* Loxo prominent card */}
           <div className="rounded-xl border border-border bg-muted/30 p-5 space-y-4">
             <div className="flex items-start justify-between gap-3">
@@ -136,26 +250,41 @@ export default function Settings() {
                 </div>
                 <div>
                   <p className="font-semibold text-sm">Loxo ATS/CRM</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Sync candidates, jobs, and activities from your Loxo workspace</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Sync your real candidates and jobs directly from Loxo</p>
                 </div>
               </div>
               <Badge
-                className="text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 flex-shrink-0"
+                className={`text-xs border-0 flex-shrink-0 ${
+                  testResult?.ok
+                    ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                    : testResult?.ok === false
+                    ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                    : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                }`}
                 data-testid="badge-loxo-status"
               >
-                Ready to Connect
+                {testResult?.ok ? "Connected" : testResult?.ok === false ? "Error" : "Ready to Connect"}
               </Badge>
             </div>
+
+            {/* Sync status row */}
+            {syncStatus && (
+              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground bg-background rounded-lg px-3 py-2.5 border border-border">
+                <span>Last sync: <span className="font-medium text-foreground">{formatLastSync(syncStatus.lastSync)}</span></span>
+                <span>Candidates: <span className="font-medium text-foreground">{syncStatus.candidatesSynced.toLocaleString()}</span></span>
+                <span>Jobs: <span className="font-medium text-foreground">{syncStatus.jobsSynced.toLocaleString()}</span></span>
+              </div>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label className="text-xs">API Key</Label>
                 <Input
                   type="password"
-                  placeholder="Enter your Loxo API key"
+                  placeholder="Paste your Loxo API key"
                   value={loxoApiKey}
                   onChange={(e) => setLoxoApiKey(e.target.value)}
-                  className="h-9 text-sm"
+                  className="h-9 text-sm font-mono"
                   data-testid="input-loxo-api-key"
                 />
               </div>
@@ -165,20 +294,52 @@ export default function Settings() {
                   type="text"
                   value={loxoSlug}
                   onChange={(e) => setLoxoSlug(e.target.value)}
-                  className="h-9 text-sm"
+                  className="h-9 text-sm font-mono"
                   data-testid="input-loxo-slug"
                 />
               </div>
             </div>
 
-            {syncStep && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-background rounded-md px-3 py-2 border border-border" data-testid="text-sync-status">
-                <Loader2 size={12} className="animate-spin text-primary flex-shrink-0" />
-                {syncStep}
+            {/* Live progress bar */}
+            {isSyncing && (
+              <div className="space-y-2" data-testid="text-sync-status">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 size={11} className="animate-spin text-primary" />
+                    {syncMessage}
+                  </span>
+                  <span>{syncProgress}%</span>
+                </div>
+                <Progress value={syncProgress} className="h-1.5" />
               </div>
             )}
 
-            <div className="flex gap-2">
+            {/* Test result */}
+            {testResult?.ok && !isSyncing && (
+              <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400">
+                <Wifi size={12} />
+                Connected — {testResult.totalPeople?.toLocaleString()} people in your Loxo database
+              </div>
+            )}
+            {testResult?.ok === false && (
+              <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+                <WifiOff size={12} />
+                Could not connect. Check your API key and slug.
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-xs"
+                onClick={handleSaveCredentials}
+                disabled={isSaving || isSyncing || !loxoApiKey.trim()}
+                data-testid="button-loxo-save"
+              >
+                {isSaving ? <Loader2 size={12} className="animate-spin" /> : null}
+                Save Key
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -190,7 +351,7 @@ export default function Settings() {
                 {isTesting ? (
                   <><Loader2 size={12} className="animate-spin" /> Testing...</>
                 ) : (
-                  "Test Connection"
+                  <><CheckCircle2 size={12} /> Test Connection</>
                 )}
               </Button>
               <Button
@@ -203,16 +364,23 @@ export default function Settings() {
                 {isSyncing ? (
                   <><Loader2 size={12} className="animate-spin" /> Syncing...</>
                 ) : (
-                  "Sync Now"
+                  <><RefreshCw size={12} /> Sync Now</>
                 )}
               </Button>
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              Sync imports up to 500 candidates and 250 jobs. Re-run anytime — existing records are updated, not duplicated.
+            </p>
           </div>
 
-          {/* Existing simple integrations */}
+          {/* Other integrations */}
           <div>
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Connected Services</p>
-            {integrations.map((int) => (
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Other Integrations</p>
+            {[
+              { name: "Gmail", icon: Mail, connected: true, description: "Sync emails and calendar" },
+              { name: "LinkedIn", icon: Linkedin, connected: true, description: "Import candidates and send InMails" },
+              { name: "Calendar", icon: Calendar, connected: true, description: "Interview scheduling" },
+            ].map((int) => (
               <div
                 key={int.name}
                 className="flex items-center justify-between py-2.5 border-b border-border last:border-0"
@@ -232,9 +400,7 @@ export default function Settings() {
                     Connected
                   </Badge>
                 ) : (
-                  <Button size="sm" variant="outline" className="text-xs">
-                    Connect
-                  </Button>
+                  <Button size="sm" variant="outline" className="text-xs">Connect</Button>
                 )}
               </div>
             ))}

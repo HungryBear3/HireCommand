@@ -10,6 +10,7 @@ export const users = sqliteTable("users", {
 
 export const candidates = sqliteTable("candidates", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  loxoId: integer("loxo_id").unique(), // Loxo person ID for sync dedup
   name: text("name").notNull(),
   title: text("title").notNull(),
   company: text("company").notNull(),
@@ -27,6 +28,7 @@ export const candidates = sqliteTable("candidates", {
 
 export const jobs = sqliteTable("jobs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  loxoId: integer("loxo_id").unique(), // Loxo job ID for sync dedup
   title: text("title").notNull(),
   company: text("company").notNull(),
   location: text("location").notNull(),
@@ -88,6 +90,12 @@ export const interviews = sqliteTable("interviews", {
   salaryDiscussed: text("salary_discussed"), // nullable — captured salary mention
   nextSteps: text("next_steps").notNull(),
   recommendation: text("recommendation").notNull(), // advance, hold, pass
+});
+
+// Settings (key-value store for integration credentials & sync state)
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
 });
 
 // Insert schemas

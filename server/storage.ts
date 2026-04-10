@@ -6,6 +6,7 @@ import {
   type Campaign, type InsertCampaign, campaigns,
   type Activity, type InsertActivity, activities,
   type Interview, type InsertInterview, interviews,
+  settings,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -40,6 +41,14 @@ export interface IStorage {
   createInterview(i: InsertInterview): Promise<Interview>;
   updateInterview(id: number, i: Partial<InsertInterview>): Promise<Interview | undefined>;
   deleteInterview(id: number): Promise<void>;
+  // Settings
+  getSetting(key: string): Promise<string | undefined>;
+  setSetting(key: string, value: string): Promise<void>;
+  // Loxo sync helpers
+  getCandidateByLoxoId(loxoId: number): Promise<Candidate | undefined>;
+  getJobByLoxoId(loxoId: number): Promise<Job | undefined>;
+  upsertCandidateFromLoxo(c: InsertCandidate & { loxoId: number }): Promise<Candidate>;
+  upsertJobFromLoxo(j: InsertJob & { loxoId: number }): Promise<Job>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -75,6 +84,41 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(interviews).where(eq(interviews.id, id)).get();
   }
   async deleteInterview(id: number) { db.delete(interviews).where(eq(interviews.id, id)).run(); }
+
+  // Settings
+  async getSetting(key: string) {
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    return row?.value;
+  }
+  async setSetting(key: string, value: string) {
+    db.insert(settings).values({ key, value })
+      .onConflictDoUpdate({ target: settings.key, set: { value } })
+      .run();
+  }
+
+  // Loxo sync helpers
+  async getCandidateByLoxoId(loxoId: number) {
+    return db.select().from(candidates).where(eq(candidates.loxoId, loxoId)).get();
+  }
+  async getJobByLoxoId(loxoId: number) {
+    return db.select().from(jobs).where(eq(jobs.loxoId, loxoId)).get();
+  }
+  async upsertCandidateFromLoxo(c: InsertCandidate & { loxoId: number }) {
+    const existing = await this.getCandidateByLoxoId(c.loxoId);
+    if (existing) {
+      db.update(candidates).set(c).where(eq(candidates.loxoId, c.loxoId)).run();
+      return db.select().from(candidates).where(eq(candidates.loxoId, c.loxoId)).get()!;
+    }
+    return db.insert(candidates).values(c).returning().get();
+  }
+  async upsertJobFromLoxo(j: InsertJob & { loxoId: number }) {
+    const existing = await this.getJobByLoxoId(j.loxoId);
+    if (existing) {
+      db.update(jobs).set(j).where(eq(jobs.loxoId, j.loxoId)).run();
+      return db.select().from(jobs).where(eq(jobs.loxoId, j.loxoId)).get()!;
+    }
+    return db.insert(jobs).values(j).returning().get();
+  }
 }
 
 export const storage = new DatabaseStorage();
