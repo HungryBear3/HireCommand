@@ -1,3 +1,6 @@
+import { setDefaultResultOrder } from "dns";
+setDefaultResultOrder("ipv4first"); // force IPv4 — Supabase rejects IPv6 with XX000
+
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
