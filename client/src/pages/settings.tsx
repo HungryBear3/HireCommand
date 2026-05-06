@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useCurrentUser, isAdmin } from "@/lib/auth";
 import {
   User,
   Mail,
@@ -85,6 +86,33 @@ interface LinkedInSyncStatus {
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { data: currentUser } = useCurrentUser();
+  const adminUser = isAdmin(currentUser);
+
+  // Change password state
+  const [cpCurrent, setCpCurrent] = useState("");
+  const [cpNew, setCpNew] = useState("");
+  const [cpConfirm, setCpConfirm] = useState("");
+  const cpMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/me/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ currentPassword: cpCurrent, newPassword: cpNew }),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        throw new Error(e.error || "Failed to change password");
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      setCpCurrent(""); setCpNew(""); setCpConfirm("");
+      toast({ title: "Password changed", description: "Your password has been updated." });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
 
   // QuickBooks
   const { data: qbStatus } = useQuery<QBStatus>({ queryKey: ["/api/qb/status"] });
@@ -358,30 +386,100 @@ export default function Settings() {
               <User size={24} className="text-primary" />
             </div>
             <div>
-              <p className="font-semibold">Andrew</p>
-              <p className="text-sm text-muted-foreground">Managing Partner — The Hiring Advisors</p>
+              <p className="font-semibold">{currentUser?.recruiterName ?? currentUser?.username ?? "—"}</p>
+              <p className="text-sm text-muted-foreground">
+                {adminUser ? "Admin — The Hiring Advisors" : "Recruiter — The Hiring Advisors"}
+              </p>
             </div>
           </div>
           <Separator />
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label className="text-xs">Full Name</Label>
-              <Input defaultValue="Andrew" className="h-9 text-sm" data-testid="input-full-name" />
+              <Label className="text-xs">Name</Label>
+              <Input
+                defaultValue={currentUser?.recruiterName ?? currentUser?.username ?? ""}
+                className="h-9 text-sm"
+                data-testid="input-full-name"
+                readOnly
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Email</Label>
-              <Input defaultValue="andrew@thehiringadvisors.com" className="h-9 text-sm" data-testid="input-email" />
+              <Input
+                defaultValue={currentUser?.email ?? ""}
+                className="h-9 text-sm"
+                data-testid="input-email"
+                readOnly
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Company</Label>
-              <Input defaultValue="The Hiring Advisors" className="h-9 text-sm" data-testid="input-company" />
+              <Input defaultValue="The Hiring Advisors" className="h-9 text-sm" data-testid="input-company" readOnly />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Role</Label>
-              <Input defaultValue="Managing Partner" className="h-9 text-sm" data-testid="input-role" />
+              <Label className="text-xs">Access Level</Label>
+              <Input
+                defaultValue={adminUser ? "Admin" : "Recruiter"}
+                className="h-9 text-sm"
+                data-testid="input-role"
+                readOnly
+              />
             </div>
           </div>
-          <Button size="sm" data-testid="button-save-profile">Save Changes</Button>
+        </CardContent>
+      </Card>
+
+      {/* Change Password */}
+      <Card className="border border-card-border">
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold">Change Password</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Current Password</Label>
+              <Input
+                type="password"
+                value={cpCurrent}
+                onChange={e => setCpCurrent(e.target.value)}
+                placeholder="••••••••"
+                className="h-9 text-sm"
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">New Password</Label>
+              <Input
+                type="password"
+                value={cpNew}
+                onChange={e => setCpNew(e.target.value)}
+                placeholder="••••••••"
+                className="h-9 text-sm"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Confirm New Password</Label>
+              <Input
+                type="password"
+                value={cpConfirm}
+                onChange={e => setCpConfirm(e.target.value)}
+                placeholder="••••••••"
+                className="h-9 text-sm"
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+          {cpNew && cpConfirm && cpNew !== cpConfirm && (
+            <p className="text-xs text-destructive">Passwords do not match.</p>
+          )}
+          <Button
+            size="sm"
+            disabled={!cpCurrent || !cpNew || cpNew !== cpConfirm || cpMutation.isPending}
+            onClick={() => cpMutation.mutate()}
+          >
+            {cpMutation.isPending ? "Updating…" : "Update Password"}
+          </Button>
         </CardContent>
       </Card>
 
@@ -1119,6 +1217,162 @@ export default function Settings() {
           </div>
         </CardContent>
       </Card>
+
+      {/* User Management — admin only */}
+      {adminUser && <UserManagementCard />}
     </div>
+  );
+}
+
+// ── User Management (admin only) ──────────────────────────────────────────────
+
+interface AppUser {
+  id: number;
+  username: string;
+  email: string | null;
+  role: string;
+  recruiterName: string | null;
+}
+
+function UserManagementCard() {
+  const { toast } = useToast();
+  const { data: users = [], refetch } = useQuery<AppUser[]>({
+    queryKey: ["/api/users"],
+    queryFn: async () => {
+      const r = await fetch("/api/users", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load users");
+      return r.json();
+    },
+  });
+
+  const [creating, setCreating] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newRecruiter, setNewRecruiter] = useState("");
+  const [newRole, setNewRole] = useState("user");
+  const [newPass, setNewPass] = useState("");
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          email: newEmail,
+          username: newEmail,
+          password: newPass,
+          role: newRole,
+          recruiterName: newRecruiter || null,
+        }),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        throw new Error(e.error || "Failed to create user");
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      refetch();
+      setCreating(false);
+      setNewEmail(""); setNewName(""); setNewRecruiter(""); setNewRole("user"); setNewPass("");
+      toast({ title: "User created" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: async ({ id, password }: { id: number; password: string }) => {
+      const r = await fetch(`/api/users/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ password }),
+      });
+      if (!r.ok) throw new Error("Failed to reset password");
+    },
+    onSuccess: () => toast({ title: "Password reset" }),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  function handleReset(user: AppUser) {
+    const pw = window.prompt(`Enter new password for ${user.email ?? user.username}:`);
+    if (pw) resetMutation.mutate({ id: user.id, password: pw });
+  }
+
+  return (
+    <Card className="border border-card-border">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-semibold">User Management</CardTitle>
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setCreating(v => !v)}>
+            <Plus size={12} />
+            Add User
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {creating && (
+          <div className="border border-border rounded-lg p-4 space-y-3 bg-muted/20">
+            <p className="text-xs font-medium">New User</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Email</Label>
+                <Input value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="user@example.com" className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Recruiter Name</Label>
+                <Input value={newRecruiter} onChange={e => setNewRecruiter(e.target.value)} placeholder="e.g. Andrew" className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Temporary Password</Label>
+                <Input type="password" value={newPass} onChange={e => setNewPass(e.target.value)} placeholder="••••••••" className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Role</Label>
+                <select
+                  value={newRole}
+                  onChange={e => setNewRole(e.target.value)}
+                  className="h-8 text-sm w-full rounded-md border border-input bg-background px-2"
+                >
+                  <option value="user">Recruiter</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => createMutation.mutate()} disabled={!newEmail || !newPass || createMutation.isPending}>
+                {createMutation.isPending ? "Creating…" : "Create"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setCreating(false)}>Cancel</Button>
+            </div>
+          </div>
+        )}
+
+        <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+          {users.map(u => (
+            <div key={u.id} className="flex items-center justify-between px-4 py-3 bg-background">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
+                  {(u.recruiterName ?? u.username)[0]?.toUpperCase()}
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{u.recruiterName ?? u.username}</p>
+                  <p className="text-xs text-muted-foreground">{u.email ?? "—"}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Badge variant={u.role === "admin" ? "default" : "secondary"} className="text-[10px]">
+                  {u.role === "admin" ? "Admin" : "Recruiter"}
+                </Badge>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleReset(u)}>
+                  Reset PW
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

@@ -94,6 +94,12 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  // ======================== AUTH WALL ========================
+  // All routes below this line require a valid session.
+  // /api/health, /api/login, /api/logout, /api/me are registered above and
+  // handled before this middleware fires for those paths.
+  app.use("/api", requireAuth);
+
   // ======================== CANDIDATES ========================
   app.get("/api/candidates", async (_req, res) => {
     const data = await storage.getCandidates();
