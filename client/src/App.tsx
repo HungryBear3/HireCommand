@@ -24,6 +24,8 @@ import ClientPortal from "@/pages/client-portal";
 import Revenue from "@/pages/revenue";
 import Source from "@/pages/source";
 import Invoices from "@/pages/invoices";
+import Login from "@/pages/login";
+import { useCurrentUser } from "@/lib/auth";
 
 function AppRouter() {
   return (
@@ -48,22 +50,42 @@ function AppRouter() {
   );
 }
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { data: user, isLoading } = useCurrentUser();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-sm text-muted-foreground">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login />;
+  }
+
+  return <>{children}</>;
+}
+
 function App() {
   return (
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <Toaster />
-          <div className="flex min-h-screen">
-            <Router hook={useHashLocation}>
-              <AppSidebar />
-              <main className="flex-1 ml-[220px] p-6 overflow-auto">
-                <AppRouter />
-              </main>
-              <VoiceCommand />
-              <CommandBar />
-            </Router>
-          </div>
+          <AuthGate>
+            <div className="flex min-h-screen">
+              <Router hook={useHashLocation}>
+                <AppSidebar />
+                <main className="flex-1 ml-[220px] p-6 overflow-auto">
+                  <AppRouter />
+                </main>
+                <VoiceCommand />
+                <CommandBar />
+              </Router>
+            </div>
+          </AuthGate>
         </TooltipProvider>
       </QueryClientProvider>
     </ThemeProvider>

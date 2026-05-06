@@ -6,6 +6,9 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  email: text("email").unique(),            // login identifier
+  role: text("role").notNull().default("user"), // 'admin' | 'user'
+  recruiterName: text("recruiter_name"),    // 'Andrew' | 'Ryan' | 'Aileen' — links user to commission data
 });
 
 export const candidates = pgTable("candidates", {

@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { setupAuth } from "./auth";
 
 const app = express();
 const httpServer = createServer(app);
@@ -9,6 +10,20 @@ const httpServer = createServer(app);
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
+  }
+}
+
+declare global {
+  namespace Express {
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    interface User {
+      id: number;
+      username: string;
+      email: string | null;
+      role: string;
+      recruiterName: string | null;
+      password: string;
+    }
   }
 }
 
@@ -64,6 +79,7 @@ app.use((req, res, next) => {
   log(`DATABASE_URL=${process.env.DATABASE_URL ? "SET (" + process.env.DATABASE_URL.split("@")[1] + ")" : "NOT SET"}`);
   log(`PORT=${process.env.PORT || "5000 (default)"}`);
 
+  setupAuth(app);
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

@@ -17,9 +17,11 @@ import {
   Moon,
   Zap,
   FileText,
+  LogOut,
 } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import { cn } from "@/lib/utils";
+import { useCurrentUser, useLogout } from "@/lib/auth";
 
 const navItems = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -61,6 +63,8 @@ function HireCommandLogo() {
 export default function AppSidebar() {
   const [location] = useLocation();
   const { theme, toggleTheme } = useTheme();
+  const { data: currentUser } = useCurrentUser();
+  const logout = useLogout();
 
   return (
     <aside className="fixed left-0 top-0 bottom-0 w-[220px] bg-sidebar text-sidebar-foreground border-r border-sidebar-border flex flex-col z-50">
@@ -108,16 +112,25 @@ export default function AppSidebar() {
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           {theme === "dark" ? "Light Mode" : "Dark Mode"}
         </button>
-        <div className="px-3 pt-2 border-t border-sidebar-border">
-          <a
-            href="https://www.perplexity.ai/computer"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11px] text-sidebar-foreground/40 hover:text-sidebar-foreground/60 transition-colors"
-          >
-            Created with Perplexity Computer
-          </a>
-        </div>
+        {currentUser && (
+          <div className="border-t border-sidebar-border pt-2 space-y-1">
+            <div className="px-3 py-1">
+              <p className="text-xs font-medium text-white/80 truncate">
+                {currentUser.recruiterName ?? currentUser.username}
+              </p>
+              <p className="text-[11px] text-sidebar-foreground/40 truncate">
+                {currentUser.email ?? ""}
+              </p>
+            </div>
+            <button
+              onClick={() => logout.mutate()}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-sidebar-foreground/70 hover:text-white hover:bg-sidebar-accent/50 transition-colors w-full"
+            >
+              <LogOut size={16} />
+              Sign out
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );

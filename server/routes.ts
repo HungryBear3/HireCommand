@@ -6,7 +6,10 @@ import { registerOpenApi } from "./openapi";
 import { registerSourcingRoutes } from "./sourcing";
 import { registerQBRoutes } from "./quickbooks";
 import { registerLinkedInSyncRoutes, checkAndRunStartupSync } from "./linkedin-sync";
+import { registerCandidateImportRoutes } from "./candidate-import";
 import { insertInvoiceSchema } from "@shared/schema";
+import passport from "passport";
+import { requireAuth, requireAdmin, hashPassword } from "./auth";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -15,6 +18,80 @@ export async function registerRoutes(
   // ======================== HEALTH CHECK ========================
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // ======================== AUTH ========================
+
+  app.post("/api/login", (req, res, next) => {
+    passport.authenticate("local", (err: any, user: any, info: any) => {
+      if (err) return next(err);
+      if (!user) return res.status(401).json({ error: info?.message || "Invalid credentials" });
+      req.logIn(user, (err2) => {
+        if (err2) return next(err2);
+        const { password: _pw, ...safe } = user;
+        res.json(safe);
+      });
+    })(req, res, next);
+  });
+
+  app.post("/api/logout", (req, res, next) => {
+    req.logout((err) => {
+      if (err) return next(err);
+      res.json({ ok: true });
+    });
+  });
+
+  app.get("/api/me", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ error: "Unauthorized" });
+    const { password: _pw, ...safe } = req.user as any;
+    res.json(safe);
+  });
+
+  // Admin: list all users
+  app.get("/api/users", requireAdmin, async (_req, res) => {
+    // Don't expose passwords
+    const allUsers = await storage.getAllUsers();
+    res.json(allUsers.map(({ password: _pw, ...u }) => u));
+  });
+
+  // Admin: create user
+  app.post("/api/users", requireAdmin, async (req, res) => {
+    const { email, username, password, role, recruiterName } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "email and password required" });
+    const hashed = await hashPassword(password);
+    const user = await storage.createUser({
+      email,
+      username: username || email,
+      password: hashed,
+      role: role || "user",
+      recruiterName: recruiterName || null,
+    });
+    const { password: _pw, ...safe } = user;
+    res.status(201).json(safe);
+  });
+
+  // Admin: update user
+  app.patch("/api/users/:id", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    const { password, ...rest } = req.body;
+    const update: Record<string, unknown> = { ...rest };
+    if (password) update.password = await hashPassword(password);
+    const user = await storage.updateUser(id, update as any);
+    if (!user) return res.status(404).json({ error: "Not found" });
+    const { password: _pw, ...safe } = user;
+    res.json(safe);
+  });
+
+  // Self: change own password
+  app.post("/api/me/change-password", requireAuth, async (req, res) => {
+    const me = req.user as any;
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: "Missing fields" });
+    const bcrypt = await import("bcrypt");
+    const ok = await bcrypt.compare(currentPassword, me.password);
+    if (!ok) return res.status(401).json({ error: "Current password incorrect" });
+    await storage.updateUser(me.id, { password: await hashPassword(newPassword) });
+    res.json({ ok: true });
   });
 
   // ======================== CANDIDATES ========================
@@ -141,23 +218,58 @@ export async function registerRoutes(
 
   // ======================== STATS ========================
   app.get("/api/stats", async (_req, res) => {
-    const allJobs = await storage.getJobs();
-    const allCandidates = await storage.getCandidates();
-    
+    const [allJobs, allCandidates, allInterviews, allPlacements] = await Promise.all([
+      storage.getJobs(),
+      storage.getCandidates(),
+      storage.getInterviews(),
+      storage.getPlacements(),
+    ]);
+
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const interviewsThisWeek = allInterviews.filter(i => {
+      const d = new Date(i.interviewDate);
+      return d >= startOfWeek && d <= now;
+    }).length;
+
+    const placementsMTD = allPlacements.filter(p => {
+      const d = new Date(p.placedDate);
+      return d >= startOfMonth && d <= now;
+    }).length;
+
+    const revenueMTD = allPlacements
+      .filter(p => new Date(p.placedDate) >= startOfMonth)
+      .reduce((sum, p) => sum + (p.feeAmount || 0), 0);
+
+    const fmtRevenue = (n: number) => {
+      if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+      if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+      return `$${n}`;
+    };
+
+    const placedCandidates = allPlacements.length;
+
     res.json({
       activeJobs: allJobs.length,
-      pipelineCandidates: allCandidates.length * 53,
-      interviewsThisWeek: 8,
-      placementsMTD: 3,
-      revenueMTD: "$127K",
-      avgTimeToFill: 34,
+      pipelineCandidates: allCandidates.length,
+      interviewsThisWeek,
+      placementsMTD,
+      revenueMTD: fmtRevenue(revenueMTD),
+      avgTimeToFill: allJobs.length > 0
+        ? Math.round(allJobs.reduce((s, j) => s + (j.daysOpen || 0), 0) / allJobs.length)
+        : 0,
       pipeline: {
-        sourced: allCandidates.filter(c => c.status === "sourced").length * 15,
-        contacted: allCandidates.filter(c => c.status === "contacted").length * 12,
-        screening: allCandidates.filter(c => c.status === "screening").length * 10,
-        interview: allCandidates.filter(c => c.status === "interview").length * 5,
-        offer: allCandidates.filter(c => c.status === "offer").length * 3,
-        placed: 3,
+        sourced: allCandidates.filter(c => c.status === "sourced").length,
+        contacted: allCandidates.filter(c => c.status === "contacted").length,
+        screening: allCandidates.filter(c => c.status === "screening").length,
+        interview: allCandidates.filter(c => c.status === "interview").length,
+        offer: allCandidates.filter(c => c.status === "offer").length,
+        placed: placedCandidates,
       },
     });
   });
@@ -510,6 +622,9 @@ export async function registerRoutes(
     res.json({ deleted: true });
   });
 
+  // ======================== CANDIDATE CV IMPORT ========================
+  registerCandidateImportRoutes(app);
+
   // ======================== QUICKBOOKS ========================
   registerQBRoutes(app);
 
@@ -522,8 +637,8 @@ export async function registerRoutes(
   // ======================== OPEN API / SWAGGER ========================
   registerOpenApi(app);
 
-  // Check if LinkedIn sync is overdue on startup
-  checkAndRunStartupSync();
+  // Delay startup LinkedIn sync check 60s to let DB connection stabilize
+  setTimeout(() => checkAndRunStartupSync(), 60_000);
 
   return httpServer;
 }

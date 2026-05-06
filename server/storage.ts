@@ -23,13 +23,17 @@ const client = postgres(process.env.DATABASE_URL || "postgresql://localhost/hire
   max: 10,
   connect_timeout: 15,
   idle_timeout: 30,
-  onnotice: () => {}, // suppress notices
+  ssl: 'require',
+  onnotice: () => {},
 });
 export const db = drizzle(client);
 
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  getAllUsers(): Promise<User[]>;
+  updateUser(id: number, data: Partial<InsertUser>): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getCandidates(): Promise<Candidate[]>;
   getCandidate(id: number): Promise<Candidate | undefined>;
@@ -85,6 +89,17 @@ export class DatabaseStorage implements IStorage {
   }
   async getUserByUsername(username: string) {
     const rows = await db.select().from(users).where(eq(users.username, username));
+    return rows[0];
+  }
+  async getUserByEmail(email: string) {
+    const rows = await db.select().from(users).where(eq(users.email, email));
+    return rows[0];
+  }
+  async getAllUsers() {
+    return db.select().from(users);
+  }
+  async updateUser(id: number, data: Partial<InsertUser>) {
+    const rows = await db.update(users).set(data).where(eq(users.id, id)).returning();
     return rows[0];
   }
   async createUser(u: InsertUser) {

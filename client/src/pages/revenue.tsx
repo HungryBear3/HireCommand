@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useCurrentUser, isAdmin } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1084,22 +1085,187 @@ function buildCSVRows(placements: Placement[], employee?: string): string[][] {
   return rows;
 }
 
+// ──────────────── Commission Settings ────────────────
+
+const STORAGE_KEY = "hirecommand_commission_settings";
+
+interface CommissionSettingsState {
+  rates: Record<string, number>;
+  defaultSplit: Record<string, number>;
+  annualGoals: Record<string, number>;
+}
+
+function loadSettings(): CommissionSettingsState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return {
+    rates: { Andrew: 40, Ryan: 35, Aileen: 25 },
+    defaultSplit: { Andrew: 50, Ryan: 30, Aileen: 20 },
+    annualGoals: { Andrew: 200000, Ryan: 150000, Aileen: 100000 },
+  };
+}
+
+function CommissionSettings() {
+  const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const adminUser = isAdmin(currentUser);
+  const [settings, setSettings] = useState<CommissionSettingsState>(loadSettings);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<CommissionSettingsState>(settings);
+
+  function handleOpen() {
+    setDraft(JSON.parse(JSON.stringify(settings)));
+    setOpen(true);
+  }
+
+  function handleSave() {
+    setSettings(draft);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+    setOpen(false);
+    toast({ title: "Commission settings saved" });
+  }
+
+  function setField(
+    section: keyof CommissionSettingsState,
+    person: string,
+    value: string
+  ) {
+    const num = parseFloat(value) || 0;
+    setDraft(prev => ({
+      ...prev,
+      [section]: { ...prev[section], [person]: num },
+    }));
+  }
+
+  return (
+    <>
+      <Card className="border border-card-border mb-6">
+        <CardHeader className="pb-3 pt-4 px-5">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-semibold">Commission Settings</CardTitle>
+            {adminUser && (
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleOpen}>
+                Edit
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="px-5 pb-4">
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            {TEAM.map(emp => (
+              <div key={emp} className="space-y-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold ${AVATAR_COLORS[emp]}`}>
+                    {emp[0]}
+                  </div>
+                  <span className="font-medium text-sm">{emp}</span>
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Commission rate</span>
+                  <span className="font-medium text-foreground">{settings.rates[emp]}%</span>
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Default split</span>
+                  <span className="font-medium text-foreground">{settings.defaultSplit[emp]}%</span>
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Annual goal</span>
+                  <span className="font-medium text-foreground">
+                    ${settings.annualGoals[emp].toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Commission Settings</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            {TEAM.map(emp => (
+              <div key={emp} className="border border-border rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${AVATAR_COLORS[emp]}`}>
+                    {emp[0]}
+                  </div>
+                  <span className="font-semibold text-sm">{emp}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label className="text-xs mb-1 block">Commission Rate %</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={draft.rates[emp]}
+                      onChange={e => setField("rates", emp, e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs mb-1 block">Default Split %</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={draft.defaultSplit[emp]}
+                      onChange={e => setField("defaultSplit", emp, e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs mb-1 block">Annual Goal $</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={draft.annualGoals[emp]}
+                      onChange={e => setField("annualGoals", emp, e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button size="sm" onClick={handleSave}>Save Settings</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // ──────────────── Commissions Tab ────────────────
 
 function CommissionsTab({ placements }: { placements: Placement[] }) {
   const { toast } = useToast();
-  const [empTab, setEmpTab] = useState<string>("all");
+  const { data: currentUser } = useCurrentUser();
+  const adminUser = isAdmin(currentUser);
+  // Non-admin users only see their own recruiter's data
+  const myRecruiterName = currentUser?.recruiterName ?? null;
+  const visibleTeam = adminUser ? TEAM : TEAM.filter(e => e === myRecruiterName);
+
+  const [empTab, setEmpTab] = useState<string>(adminUser ? "all" : (myRecruiterName ?? "all"));
   const [yearFilter, setYearFilter] = useState("all");
   const currentYear = new Date().getFullYear().toString();
+  const savedSettings = loadSettings();
 
   const years = useMemo(() => {
     const ys = new Set(placements.map((p) => new Date(p.placedDate).getFullYear().toString()));
     return Array.from(ys).sort((a, b) => parseInt(b) - parseInt(a));
   }, [placements]);
 
-  // Per-employee stats
+  // Per-employee stats — filtered by visibility
   const empStats = useMemo(() => {
-    return TEAM.map((emp) => {
+    return visibleTeam.map((emp) => {
       const mySplits = placements.flatMap((p) =>
         p.splits.filter((s) => s.employee === emp).map((s) => ({ ...s, placement: p }))
       );
@@ -1108,7 +1274,7 @@ function CommissionsTab({ placements }: { placements: Placement[] }) {
         .filter((x) => new Date(x.placement.placedDate).getFullYear().toString() === currentYear)
         .reduce((s, x) => s + x.commissionAmount, 0);
       const placements_ = new Set(mySplits.map((x) => x.placementId)).size;
-      return { emp, totalComm, ytdComm, placements: placements_, goal: COMM_GOALS[emp] };
+      return { emp, totalComm, ytdComm, placements: placements_, goal: savedSettings.annualGoals[emp] ?? COMM_GOALS[emp] };
     });
   }, [placements, currentYear]);
 
@@ -1232,7 +1398,7 @@ function CommissionsTab({ placements }: { placements: Placement[] }) {
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-semibold">Commission Detail</h2>
         <div className="flex gap-1 ml-2">
-          {(["all", ...TEAM] as const).map((tab) => (
+          {(adminUser ? (["all", ...TEAM] as const) : visibleTeam).map((tab) => (
             <button
               key={tab}
               onClick={() => setEmpTab(tab)}
@@ -1259,16 +1425,18 @@ function CommissionsTab({ placements }: { placements: Placement[] }) {
             ))}
           </SelectContent>
         </Select>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs gap-1 ml-auto"
-          onClick={handleExportAll}
-          data-testid="button-export-all"
-        >
-          <Download size={11} />
-          Export All
-        </Button>
+        {adminUser && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1 ml-auto"
+            onClick={handleExportAll}
+            data-testid="button-export-all"
+          >
+            <Download size={11} />
+            Export All
+          </Button>
+        )}
       </div>
 
       <Card className="border border-card-border overflow-hidden">
@@ -1278,10 +1446,10 @@ function CommissionsTab({ placements }: { placements: Placement[] }) {
               <TableRow className="bg-muted/30 hover:bg-muted/30">
                 <TableHead className="text-xs">Date</TableHead>
                 <TableHead className="text-xs">Deal</TableHead>
-                <TableHead className="text-xs">Total Fee</TableHead>
-                <TableHead className="text-xs">Employee</TableHead>
-                <TableHead className="text-xs">Split %</TableHead>
-                <TableHead className="text-xs">Comm Rate</TableHead>
+                {adminUser && <TableHead className="text-xs">Total Fee</TableHead>}
+                {adminUser && <TableHead className="text-xs">Employee</TableHead>}
+                {adminUser && <TableHead className="text-xs">Split %</TableHead>}
+                {adminUser && <TableHead className="text-xs">Comm Rate</TableHead>}
                 <TableHead className="text-xs">Commission $</TableHead>
                 <TableHead className="text-xs">Status</TableHead>
               </TableRow>
@@ -1289,7 +1457,7 @@ function CommissionsTab({ placements }: { placements: Placement[] }) {
             <TableBody>
               {commRows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-12 text-muted-foreground text-sm">
+                  <TableCell colSpan={adminUser ? 8 : 3} className="text-center py-12 text-muted-foreground text-sm">
                     No commission records match your filters.
                   </TableCell>
                 </TableRow>
@@ -1303,22 +1471,24 @@ function CommissionsTab({ placements }: { placements: Placement[] }) {
                     <p className="text-sm font-medium">{r.candidate}</p>
                     <p className="text-xs text-muted-foreground">@ {r.company}</p>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{fmt(r.totalFee)}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={cn(
-                          "w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold",
-                          AVATAR_COLORS[r.employee as TeamMember] ?? "bg-gray-500"
-                        )}
-                      >
-                        {r.employee[0]}
+                  {adminUser && <TableCell className="text-sm text-muted-foreground">{fmt(r.totalFee)}</TableCell>}
+                  {adminUser && (
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <div
+                          className={cn(
+                            "w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold",
+                            AVATAR_COLORS[r.employee as TeamMember] ?? "bg-gray-500"
+                          )}
+                        >
+                          {r.employee[0]}
+                        </div>
+                        <span className="text-sm">{r.employee}</span>
                       </div>
-                      <span className="text-sm">{r.employee}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{r.splitPercent}%</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{r.commRate}%</TableCell>
+                    </TableCell>
+                  )}
+                  {adminUser && <TableCell className="text-sm text-muted-foreground">{r.splitPercent}%</TableCell>}
+                  {adminUser && <TableCell className="text-sm text-muted-foreground">{r.commRate}%</TableCell>}
                   <TableCell className="font-bold text-primary text-sm">{fmt(r.commAmount)}</TableCell>
                   <TableCell>
                     <InvoiceBadge status={r.invoiceStatus} />
@@ -1398,6 +1568,7 @@ export default function RevenuePage() {
         </TabsContent>
 
         <TabsContent value="commissions" className="mt-0">
+          <CommissionSettings />
           {isLoading ? (
             <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
               Loading commissions…

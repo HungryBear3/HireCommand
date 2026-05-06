@@ -46,6 +46,7 @@ import {
   CheckCircle2,
   AlertCircle,
   History,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -369,6 +370,61 @@ function AddCandidateDialog() {
   );
 }
 
+// ─── CV Upload Button ─────────────────────────────────────────────────────────
+
+function CVUploadButton() {
+  const { toast } = useToast();
+  const mutation = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("cv", file);
+      const res = await fetch("/api/candidates/import/cv", { method: "POST", body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Upload failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/candidates"] });
+      toast({ title: "CV imported", description: "Candidate added to your pipeline." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Import failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) mutation.mutate(file);
+    e.target.value = "";
+  }
+
+  return (
+    <label>
+      <input
+        type="file"
+        accept=".pdf,.doc,.docx,.txt"
+        className="hidden"
+        onChange={handleChange}
+        data-testid="input-cv-upload"
+      />
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-2 cursor-pointer"
+        disabled={mutation.isPending}
+        asChild
+      >
+        <span>
+          <Upload size={14} />
+          {mutation.isPending ? "Importing..." : "Upload CV"}
+        </span>
+      </Button>
+    </label>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function Candidates() {
@@ -447,6 +503,7 @@ export default function Candidates() {
             <Sparkles size={14} />
             AI Search
           </Button>
+          <CVUploadButton />
           <AddCandidateDialog />
         </div>
       </div>
