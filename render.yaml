@@ -5,7 +5,7 @@ services:
     region: oregon
     plan: starter
     buildCommand: npm install && npm run build
-    startCommand: node dist/index.cjs
+    startCommand: node --dns-result-order=ipv4first dist/index.cjs
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
