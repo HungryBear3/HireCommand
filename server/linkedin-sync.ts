@@ -30,8 +30,7 @@ import { storage } from "./storage";
 
 const LOXO_BASE = "https://app.loxo.co/api";
 const LOXO_SLUG = "the-hiring-advisors-1";
-const LOXO_KEY  = process.env.LOXO_API_KEY ||
-  "e2e54c99ad598dceef8c2bf344f6b6b82fe4d438b8918b74f1a7198a2ae06530a10b094bafc96bc4cf726657ed45131ee673a5bac33c259a484db82fef9a7d52684689b73e9fb5183e8f2068c381d9fab0aa5df8a6c69b85e1260a1f97380075b47f6fbab2ed79f00b046fe4cefa70fe80e179c7fd3c43ad9863b0bad4b14805";
+const LOXO_KEY  = process.env.LOXO_API_KEY || "";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

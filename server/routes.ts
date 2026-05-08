@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertCandidateSchema, insertJobSchema, insertActivitySchema, insertInterviewSchema } from "@shared/schema";
+import { insertCandidateSchema, insertJobSchema, insertActivitySchema, insertInterviewSchema, insertOpportunitySchema } from "@shared/schema";
 import { registerOpenApi } from "./openapi";
 import { registerSourcingRoutes } from "./sourcing";
 import { registerQBRoutes } from "./quickbooks";
@@ -157,6 +157,11 @@ export async function registerRoutes(
     res.json(data);
   });
 
+  app.delete("/api/jobs/:id", async (req, res) => {
+    await storage.deleteJob(Number(req.params.id));
+    res.status(204).end();
+  });
+
   // ======================== OPPORTUNITIES ========================
   app.get("/api/opportunities", async (_req, res) => {
     const data = await storage.getOpportunities();
@@ -167,6 +172,24 @@ export async function registerRoutes(
     const data = await storage.getOpportunity(Number(req.params.id));
     if (!data) return res.status(404).json({ error: "Not found" });
     res.json(data);
+  });
+
+  app.post("/api/opportunities", async (req, res) => {
+    const parsed = insertOpportunitySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const data = await storage.createOpportunity(parsed.data);
+    res.status(201).json(data);
+  });
+
+  app.patch("/api/opportunities/:id", async (req, res) => {
+    const data = await storage.updateOpportunity(Number(req.params.id), req.body);
+    if (!data) return res.status(404).json({ error: "Not found" });
+    res.json(data);
+  });
+
+  app.delete("/api/opportunities/:id", async (req, res) => {
+    await storage.deleteOpportunity(Number(req.params.id));
+    res.status(204).end();
   });
 
   // ======================== CAMPAIGNS ========================
@@ -407,7 +430,7 @@ export async function registerRoutes(
     if (!apiKey) return res.status(400).json({ error: "No API key configured" });
     try {
       const r = await fetch(`${LOXO_BASE}/${slug}/people?per_page=1`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { Authorization: `Token ${apiKey}` },
       });
       if (!r.ok) return res.status(401).json({ error: "Invalid credentials" });
       const data: any = await r.json();
@@ -461,7 +484,7 @@ export async function registerRoutes(
           ? `${LOXO_BASE}/${slug}/people?per_page=${perPage}&scroll_id=${encodeURIComponent(scrollId)}`
           : `${LOXO_BASE}/${slug}/people?per_page=${perPage}`;
 
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+        const r = await fetch(url, { headers: { Authorization: `Token ${apiKey}` } });
         if (!r.ok) { send({ error: `Loxo API error: ${r.status}` }); break; }
         const data: any = await r.json();
         const people: any[] = data.people || [];
@@ -524,7 +547,7 @@ export async function registerRoutes(
       while (hasMoreJobs && jobPage <= maxJobPages) {
         const r = await fetch(
           `${LOXO_BASE}/${slug}/jobs?per_page=25&page=${jobPage}`,
-          { headers: { Authorization: `Bearer ${apiKey}` } }
+          { headers: { Authorization: `Token ${apiKey}` } }
         );
         if (!r.ok) { send({ error: `Loxo jobs API error: ${r.status}` }); break; }
         const data: any = await r.json();

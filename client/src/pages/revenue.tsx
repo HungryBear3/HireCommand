@@ -1523,7 +1523,7 @@ export default function RevenuePage() {
     queryFn: () => apiRequest("GET", "/api/placements").then((r) => r.json()),
   });
 
-  const placements = apiPlacements.length > 0 ? apiPlacements : SEED_PLACEMENTS;
+  const placements = apiPlacements;
 
   return (
     <div className="space-y-4">

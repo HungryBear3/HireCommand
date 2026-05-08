@@ -4,9 +4,30 @@ import bcrypt from "bcrypt";
 import { storage } from "./storage";
 import type { Express, Request, Response, NextFunction } from "express";
 import session from "express-session";
-import connectMemoryStore from "memorystore";
+import connectPgSimple from "connect-pg-simple";
+import pg from "pg";
 
-const MemoryStore = connectMemoryStore(session);
+const PgSession = connectPgSimple(session);
+
+function buildSessionStore() {
+  if (!process.env.DATABASE_URL) {
+    // Dev fallback when no DB is configured
+    const { default: connectMemoryStore } = require("memorystore");
+    const MemoryStore = connectMemoryStore(session);
+    return new MemoryStore({ checkPeriod: 86400000 });
+  }
+  // connect-pg-simple needs a standard pg Pool (not postgres.js)
+  const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+    max: 3,
+  });
+  return new PgSession({
+    pool,
+    createTableIfMissing: true,
+    tableName: "session",
+  });
+}
 
 export function setupAuth(app: Express) {
   app.use(
@@ -17,10 +38,10 @@ export function setupAuth(app: Express) {
       cookie: {
         secure: process.env.NODE_ENV === "production",
         httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-        sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        sameSite: "lax",
       },
-      store: new MemoryStore({ checkPeriod: 86400000 }),
+      store: buildSessionStore(),
     })
   );
 

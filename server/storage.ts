@@ -94,8 +94,12 @@ export interface IStorage {
   getJob(id: number): Promise<Job | undefined>;
   createJob(j: InsertJob): Promise<Job>;
   updateJob(id: number, j: Partial<InsertJob>): Promise<Job | undefined>;
+  deleteJob(id: number): Promise<void>;
   getOpportunities(): Promise<Opportunity[]>;
   getOpportunity(id: number): Promise<Opportunity | undefined>;
+  createOpportunity(o: InsertOpportunity): Promise<Opportunity>;
+  updateOpportunity(id: number, o: Partial<InsertOpportunity>): Promise<Opportunity | undefined>;
+  deleteOpportunity(id: number): Promise<void>;
   getCampaigns(): Promise<Campaign[]>;
   getCampaign(id: number): Promise<Campaign | undefined>;
   getActivities(): Promise<Activity[]>;
@@ -191,6 +195,9 @@ export class DatabaseStorage implements IStorage {
     const rows = await db.update(jobs).set(j).where(eq(jobs.id, id)).returning();
     return rows[0];
   }
+  async deleteJob(id: number) {
+    await db.delete(jobs).where(eq(jobs.id, id));
+  }
 
   async getOpportunities() {
     return db.select().from(opportunities);
@@ -198,6 +205,17 @@ export class DatabaseStorage implements IStorage {
   async getOpportunity(id: number) {
     const rows = await db.select().from(opportunities).where(eq(opportunities.id, id));
     return rows[0];
+  }
+  async createOpportunity(o: InsertOpportunity) {
+    const rows = await db.insert(opportunities).values(o).returning();
+    return rows[0];
+  }
+  async updateOpportunity(id: number, o: Partial<InsertOpportunity>) {
+    const rows = await db.update(opportunities).set(o).where(eq(opportunities.id, id)).returning();
+    return rows[0];
+  }
+  async deleteOpportunity(id: number) {
+    await db.delete(opportunities).where(eq(opportunities.id, id));
   }
 
   async getCampaigns() {
@@ -466,7 +484,7 @@ async function seed() {
   }
 }
 
-// Only seed if DATABASE_URL is configured — never crash the server
-if (process.env.DATABASE_URL) {
+// Only seed in development — never flood the production DB with fake data
+if (process.env.DATABASE_URL && process.env.NODE_ENV !== "production") {
   seed().catch(err => console.error("[seed] Failed:", err.message));
 }

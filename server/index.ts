@@ -1,8 +1,14 @@
+import dns from "dns";
+// Force IPv4 DNS resolution before any module creates a DB connection.
+// Supabase pooler rejects IPv6 connections with "XX000 Tenant or user not found".
+dns.setDefaultResultOrder("ipv4first");
+
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupAuth } from "./auth";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -78,6 +84,11 @@ app.use((req, res, next) => {
   log(`NODE_ENV=${process.env.NODE_ENV}`);
   log(`DATABASE_URL=${process.env.DATABASE_URL ? "SET (" + process.env.DATABASE_URL.split("@")[1] + ")" : "NOT SET"}`);
   log(`PORT=${process.env.PORT || "5000 (default)"}`);
+
+  // Clear any stuck Loxo sync flag from a previous crashed run
+  try {
+    await storage.setSetting("loxo_sync_running", "false");
+  } catch (_) {}
 
   setupAuth(app);
   await registerRoutes(httpServer, app);
