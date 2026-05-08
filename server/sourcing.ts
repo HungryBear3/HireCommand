@@ -33,7 +33,7 @@ export interface SourcingBrief {
   limit: number;
 }
 
-export type SourceType = "linkedin_xray" | "github" | "web" | "pdl";
+export type SourceType = "linkedin_xray" | "github" | "web" | "pdl" | "perplexity";
 
 export interface SourcingCandidate {
   id: string;
@@ -61,6 +61,7 @@ export interface SourcingResult {
   totalFound: number;
   sources: Record<SourceType, number>;
   searchedAt: string;
+  perplexityCitations?: string[];
 }
 
 // ─── NL → Structured Brief ────────────────────────────────────────────────────
@@ -685,6 +686,144 @@ function generateQuickSummary(
   return `${firstName} is a ${title}${companyStr}${locationStr}.`;
 }
 
+// ─── Perplexity Sonar Search ─────────────────────────────────────────────────
+
+async function searchPerplexity(
+  brief: Partial<SourcingBrief>,
+  query: string,
+  apiKey: string,
+  limit: number
+): Promise<{ candidates: SourcingCandidate[]; citations: string[] }> {
+  const titlesStr = brief.titles?.join(", ") || "senior executive";
+  const locStr = brief.locations?.join(", ") || "";
+  const indStr = brief.industries?.join(", ") || "";
+  const skillStr = brief.skills?.join(", ") || "";
+
+  const systemPrompt = `You are a professional executive recruiter. Search the web for real people matching the candidate criteria.
+Return ONLY a valid JSON object — no markdown, no explanation, just the raw JSON.`;
+
+  const userPrompt = `Find ${Math.min(limit, 12)} real professionals matching this search: "${query}"
+
+Target profile:
+- Titles: ${titlesStr}
+${locStr ? `- Locations: ${locStr}` : ""}
+${indStr ? `- Industries: ${indStr}` : ""}
+${skillStr ? `- Skills: ${skillStr}` : ""}
+
+Search LinkedIn, company websites, conference speaker pages, professional bios, and news articles.
+
+Return a JSON object in exactly this shape:
+{
+  "candidates": [
+    {
+      "name": "Full Name",
+      "currentTitle": "Their exact current title",
+      "currentCompany": "Company name",
+      "location": "City, State",
+      "linkedinUrl": "https://linkedin.com/in/... or empty string",
+      "sourceUrl": "URL where you found them",
+      "summary": "2-3 sentence background summary highlighting relevant experience",
+      "skills": ["skill1", "skill2", "skill3", "skill4", "skill5"],
+      "fitScore": 85,
+      "fitReasons": ["Reason 1", "Reason 2", "Reason 3"]
+    }
+  ]
+}`;
+
+  const resp = await fetch("https://api.perplexity.ai/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "sonar-pro",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.2,
+      max_tokens: 4000,
+    }),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Perplexity API error ${resp.status}: ${err.slice(0, 200)}`);
+  }
+
+  const data = await resp.json() as {
+    choices: Array<{ message: { content: string } }>;
+    citations?: string[];
+  };
+
+  const content = data.choices?.[0]?.message?.content || "";
+  const citations = data.citations || [];
+
+  // Extract JSON from response (may be wrapped in markdown)
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.warn("[Perplexity] No JSON in response:", content.slice(0, 300));
+    return { candidates: [], citations };
+  }
+
+  let parsed: { candidates: Array<{
+    name: string;
+    currentTitle: string;
+    currentCompany: string;
+    location: string;
+    linkedinUrl?: string;
+    sourceUrl?: string;
+    summary: string;
+    skills: string[];
+    fitScore: number;
+    fitReasons: string[];
+  }> };
+
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    console.warn("[Perplexity] Failed to parse JSON");
+    return { candidates: [], citations };
+  }
+
+  const candidates: SourcingCandidate[] = (parsed.candidates || []).map((c, i) => ({
+    id: `plx_${Date.now()}_${i}`,
+    name: c.name || "Unknown",
+    currentTitle: c.currentTitle || "",
+    currentCompany: c.currentCompany || "",
+    location: c.location || "",
+    headline: `${c.currentTitle} at ${c.currentCompany}`,
+    summary: c.summary || "",
+    skills: Array.isArray(c.skills) ? c.skills.slice(0, 8) : [],
+    source: "perplexity" as SourceType,
+    sourceUrl: c.sourceUrl || c.linkedinUrl || "",
+    linkedinUrl: c.linkedinUrl || undefined,
+    fitScore: Math.min(Math.max(Number(c.fitScore) || 70, 0), 99),
+    fitReasons: Array.isArray(c.fitReasons) ? c.fitReasons : [],
+    addedToPipeline: false,
+  }));
+
+  return { candidates, citations };
+}
+
+// ─── DB-backed key resolution ─────────────────────────────────────────────────
+
+async function resolveKeys() {
+  const { storage } = await import("./storage");
+  const [dbGoogleKey, dbGoogleCx, dbPerplexityKey] = await Promise.all([
+    storage.getSetting("sourcing_google_cse_key"),
+    storage.getSetting("sourcing_google_cse_cx"),
+    storage.getSetting("sourcing_perplexity_key"),
+  ]);
+  return {
+    googleApiKey: dbGoogleKey || process.env.GOOGLE_CSE_API_KEY || "",
+    googleCx: dbGoogleCx || process.env.GOOGLE_CSE_CX || "",
+    pdlApiKey: process.env.PDL_API_KEY || "",
+    perplexityKey: dbPerplexityKey || process.env.PERPLEXITY_API_KEY || "",
+  };
+}
+
 // ─── Main route handler ───────────────────────────────────────────────────────
 
 export function registerSourcingRoutes(app: Express) {
@@ -713,75 +852,87 @@ export function registerSourcingRoutes(app: Express) {
       const briefParsed = parseBrief(query);
       const booleanString = buildBooleanString(briefParsed, query);
 
-      // Step 2: Collect from sources
-      const googleApiKey = process.env.GOOGLE_CSE_API_KEY || "";
-      const googleCx = process.env.GOOGLE_CSE_CX || "";
-      const pdlApiKey = process.env.PDL_API_KEY || "";
+      // Step 2: Resolve API keys (DB first, then env vars)
+      const { googleApiKey, googleCx, pdlApiKey, perplexityKey } = await resolveKeys();
 
       const allCandidates: SourcingCandidate[] = [];
       const sourceCounts: Record<string, number> = {
-        linkedin_xray: 0, github: 0, web: 0, pdl: 0
+        linkedin_xray: 0, github: 0, web: 0, pdl: 0, perplexity: 0
       };
+      let perplexityCitations: string[] = [];
 
       const hasGoogleKeys = googleApiKey.length > 0 && googleCx.length > 0;
+      const hasPerplexity = perplexityKey.length > 0;
+      const hasAnySources = hasGoogleKeys || hasPerplexity;
 
-      if (hasGoogleKeys) {
-        // Real search
-        const tasks: Promise<SourcingCandidate[]>[] = [];
+      if (hasAnySources) {
+        const tasks: Promise<void>[] = [];
 
-        if (sources.includes("linkedin_xray")) {
-          tasks.push(
-            xrayLinkedIn(booleanString, briefParsed.locations || [], googleApiKey, googleCx, Math.ceil(limit * 0.5))
-              .catch(() => [])
-          );
-        }
-
-        if (sources.includes("web")) {
-          tasks.push(
-            xrayOpenWeb(booleanString, googleApiKey, googleCx, Math.ceil(limit * 0.2))
-              .catch(() => [])
-          );
+        if (hasGoogleKeys) {
+          if (sources.includes("linkedin_xray")) {
+            tasks.push(
+              xrayLinkedIn(booleanString, briefParsed.locations || [], googleApiKey, googleCx, Math.ceil(limit * 0.5))
+                .then(results => { allCandidates.push(...results); results.forEach(c => { sourceCounts[c.source] = (sourceCounts[c.source] || 0) + 1; }); })
+                .catch(err => console.warn("[X-Ray LinkedIn]", err.message))
+            );
+          }
+          if (sources.includes("web")) {
+            tasks.push(
+              xrayOpenWeb(booleanString, googleApiKey, googleCx, Math.ceil(limit * 0.2))
+                .then(results => { allCandidates.push(...results); results.forEach(c => { sourceCounts[c.source] = (sourceCounts[c.source] || 0) + 1; }); })
+                .catch(err => console.warn("[X-Ray Web]", err.message))
+            );
+          }
         }
 
         if (sources.includes("github") && briefParsed.skills && briefParsed.skills.length > 0) {
           tasks.push(
             searchGitHub(briefParsed.skills, briefParsed.locations || [], Math.ceil(limit * 0.2))
-              .catch(() => [])
+              .then(results => { allCandidates.push(...results); results.forEach(c => { sourceCounts[c.source] = (sourceCounts[c.source] || 0) + 1; }); })
+              .catch(err => console.warn("[GitHub]", err.message))
           );
         }
 
         if (sources.includes("pdl") && pdlApiKey.length > 0) {
           tasks.push(
             searchPDL(briefParsed, pdlApiKey, Math.ceil(limit * 0.3))
-              .catch(() => [])
+              .then(results => { allCandidates.push(...results); results.forEach(c => { sourceCounts[c.source] = (sourceCounts[c.source] || 0) + 1; }); })
+              .catch(err => console.warn("[PDL]", err.message))
           );
         }
 
-        const results = await Promise.allSettled(tasks);
-        results.forEach(r => {
-          if (r.status === "fulfilled") {
-            allCandidates.push(...r.value);
-            r.value.forEach(c => {
-              sourceCounts[c.source] = (sourceCounts[c.source] || 0) + 1;
-            });
-          }
-        });
+        if (sources.includes("perplexity") && hasPerplexity) {
+          tasks.push(
+            searchPerplexity(briefParsed, query, perplexityKey, Math.min(limit, 12))
+              .then(({ candidates, citations }) => {
+                allCandidates.push(...candidates);
+                sourceCounts.perplexity = candidates.length;
+                perplexityCitations = citations;
+              })
+              .catch(err => console.warn("[Perplexity]", err.message))
+          );
+        }
+
+        await Promise.all(tasks);
       }
 
-      // Fallback to demo data when no API keys configured OR results empty
+      // Fallback to demo when no real results
       if (allCandidates.length === 0) {
         const demo = generateDemoResults(briefParsed, query);
         allCandidates.push(...demo);
         sourceCounts.linkedin_xray = demo.filter(d => d.source === "linkedin_xray").length;
       }
 
-      // Step 3: Score and sort
-      const scored = scoreCandidates(allCandidates, briefParsed);
+      // Step 3: Score non-Perplexity candidates (Perplexity scores its own)
+      const toScore = allCandidates.filter(c => c.source !== "perplexity");
+      const preScored = allCandidates.filter(c => c.source === "perplexity");
+      const scored = [...scoreCandidates(toScore, briefParsed), ...preScored]
+        .sort((a, b) => b.fitScore - a.fitScore);
 
       // Step 4: Deduplicate by name+company
       const seen = new Set<string>();
       const deduped = scored.filter(c => {
-        const key = `${c.name}|${c.currentCompany}`.toLowerCase();
+        const key = `${c.name.toLowerCase()}|${c.currentCompany.toLowerCase()}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -794,6 +945,7 @@ export function registerSourcingRoutes(app: Express) {
         totalFound: deduped.length,
         sources: sourceCounts as Record<SourceType, number>,
         searchedAt: new Date().toISOString(),
+        perplexityCitations: perplexityCitations.length > 0 ? perplexityCitations : undefined,
       };
 
       res.json(response);
@@ -845,12 +997,68 @@ export function registerSourcingRoutes(app: Express) {
    * GET /api/sourcing/config
    * Returns which APIs are configured (no key values)
    */
-  app.get("/api/sourcing/config", (_req: Request, res: Response) => {
+  app.get("/api/sourcing/config", async (_req: Request, res: Response) => {
+    const { googleApiKey, googleCx, perplexityKey, pdlApiKey } = await resolveKeys();
+    const hasGoogle = !!(googleApiKey && googleCx);
+    const hasPerplexity = !!perplexityKey;
     res.json({
-      googleCse: !!(process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_CX),
-      pdl: !!process.env.PDL_API_KEY,
-      githubPublic: true, // always available unauthenticated
-      demoMode: !(process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_CX),
+      googleCse: hasGoogle,
+      pdl: !!pdlApiKey,
+      perplexity: hasPerplexity,
+      githubPublic: true,
+      demoMode: !hasGoogle && !hasPerplexity,
+    });
+  });
+
+  /**
+   * POST /api/sourcing/settings
+   * Save API keys to DB (admin only)
+   */
+  app.post("/api/sourcing/settings", async (req: Request, res: Response) => {
+    try {
+      const { storage } = await import("./storage");
+      const { googleCseKey, googleCseCx, perplexityKey } = req.body as {
+        googleCseKey?: string;
+        googleCseCx?: string;
+        perplexityKey?: string;
+      };
+      if (googleCseKey !== undefined) {
+        if (googleCseKey) await storage.setSetting("sourcing_google_cse_key", googleCseKey);
+        else await storage.deleteSetting("sourcing_google_cse_key");
+      }
+      if (googleCseCx !== undefined) {
+        if (googleCseCx) await storage.setSetting("sourcing_google_cse_cx", googleCseCx);
+        else await storage.deleteSetting("sourcing_google_cse_cx");
+      }
+      if (perplexityKey !== undefined) {
+        if (perplexityKey) await storage.setSetting("sourcing_perplexity_key", perplexityKey);
+        else await storage.deleteSetting("sourcing_perplexity_key");
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /**
+   * GET /api/sourcing/settings
+   * Returns masked current key values
+   */
+  app.get("/api/sourcing/settings", async (_req: Request, res: Response) => {
+    const { storage } = await import("./storage");
+    const [googleKey, googleCx, perplexityKey] = await Promise.all([
+      storage.getSetting("sourcing_google_cse_key"),
+      storage.getSetting("sourcing_google_cse_cx"),
+      storage.getSetting("sourcing_perplexity_key"),
+    ]);
+    const mask = (v: string | undefined) => v ? `${v.slice(0, 6)}${"•".repeat(Math.max(0, v.length - 6))}` : "";
+    res.json({
+      googleCseKey: mask(googleKey),
+      googleCseCx: mask(googleCx),
+      perplexityKey: mask(perplexityKey),
+      googleCseKeySet: !!googleKey,
+      googleCseCxSet: !!googleCx,
+      perplexityKeySet: !!perplexityKey,
     });
   });
 }

@@ -43,7 +43,7 @@ import { useToast } from "@/hooks/use-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type SourceType = "linkedin_xray" | "github" | "web" | "pdl";
+type SourceType = "linkedin_xray" | "github" | "web" | "pdl" | "perplexity";
 
 interface SourcingCandidate {
   id: string;
@@ -79,6 +79,7 @@ interface SourcingResult {
   totalFound: number;
   sources: Record<SourceType, number>;
   searchedAt: string;
+  perplexityCitations?: string[];
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -113,6 +114,11 @@ const SOURCE_LABELS: Record<SourceType, { label: string; color: string; icon: Re
     color: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
     icon: <span className="text-[11px]">📊</span>,
   },
+  perplexity: {
+    label: "Perplexity AI",
+    color: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300",
+    icon: <Sparkles className="w-3 h-3" />,
+  },
 };
 
 const AVATAR_COLORS: Record<SourceType, string> = {
@@ -120,6 +126,7 @@ const AVATAR_COLORS: Record<SourceType, string> = {
   web: "bg-slate-500",
   github: "bg-orange-500",
   pdl: "bg-purple-500",
+  perplexity: "bg-teal-500",
 };
 
 function getFitScoreColor(score: number): string {
@@ -352,9 +359,11 @@ interface BriefAnalysisPanelProps {
   result: SourcingResult;
   onCopyBoolean: () => void;
   demoMode: boolean;
+  googleAvailable: boolean;
+  perplexityAvailable: boolean;
 }
 
-function BriefAnalysisPanel({ result, onCopyBoolean, demoMode }: BriefAnalysisPanelProps) {
+function BriefAnalysisPanel({ result, onCopyBoolean, demoMode, googleAvailable, perplexityAvailable }: BriefAnalysisPanelProps) {
   const { briefParsed, booleanString, sources } = result;
   const sourceEntries = Object.entries(sources).filter(([, count]) => count > 0) as [SourceType, number][];
 
@@ -458,6 +467,26 @@ function BriefAnalysisPanel({ result, onCopyBoolean, demoMode }: BriefAnalysisPa
           </div>
         )}
 
+        {/* Perplexity citations */}
+        {result.perplexityCitations && result.perplexityCitations.length > 0 && (
+          <div>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Perplexity Sources</p>
+            <div className="space-y-1">
+              {result.perplexityCitations.slice(0, 5).map((url, i) => {
+                let host = url;
+                try { host = new URL(url).hostname.replace("www.", ""); } catch { /* ignore */ }
+                return (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[10px] text-primary hover:underline truncate">
+                    <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                    {host}
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Demo mode notice */}
         {demoMode && (
           <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3">
@@ -465,9 +494,10 @@ function BriefAnalysisPanel({ result, onCopyBoolean, demoMode }: BriefAnalysisPa
               <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div>
                 <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Demo Mode</p>
-                <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 leading-relaxed">
-                  Add Google CSE keys in Settings for live results
-                </p>
+                <ul className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 leading-relaxed space-y-0.5">
+                  {!googleAvailable && <li>→ Google CSE keys for X-Ray</li>}
+                  {!perplexityAvailable && <li>→ Perplexity key for AI search</li>}
+                </ul>
               </div>
             </div>
           </div>
@@ -506,19 +536,21 @@ export default function Source() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [query, setQuery] = useState("");
-  const [sources, setSources] = useState<SourceType[]>(["linkedin_xray", "web"]);
+  const [sources, setSources] = useState<SourceType[]>(["linkedin_xray", "web", "perplexity"]);
   const [limit, setLimit] = useState(20);
   const [result, setResult] = useState<SourcingResult | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [addingId, setAddingId] = useState<string | null>(null);
 
   // Config query (for demo mode detection)
-  const { data: config } = useQuery<{ demoMode?: boolean; pdl?: boolean }>({
+  const { data: config } = useQuery<{ demoMode?: boolean; pdl?: boolean; perplexity?: boolean; googleCse?: boolean }>({
     queryKey: ["/api/sourcing/config"],
   });
 
   const demoMode = config?.demoMode ?? true;
   const pdlAvailable = config?.pdl ?? false;
+  const perplexityAvailable = config?.perplexity ?? false;
+  const googleAvailable = config?.googleCse ?? false;
 
   const searchMessage = useSearchMessage(false);
 
@@ -771,6 +803,8 @@ export default function Source() {
                 result={result}
                 onCopyBoolean={handleCopyBoolean}
                 demoMode={demoMode}
+                googleAvailable={googleAvailable}
+                perplexityAvailable={perplexityAvailable}
               />
             ) : null}
           </div>
@@ -830,16 +864,38 @@ export default function Source() {
               <div className="grid grid-cols-2 gap-y-2 gap-x-4">
                 {(
                   [
-                    { id: "linkedin_xray" as SourceType, label: "LinkedIn X-Ray", suffix: undefined as string | undefined },
-                    { id: "web" as SourceType, label: "Open Web", suffix: undefined as string | undefined },
-                    { id: "github" as SourceType, label: "GitHub", suffix: undefined as string | undefined },
+                    {
+                      id: "linkedin_xray" as SourceType,
+                      label: "LinkedIn X-Ray",
+                      live: googleAvailable,
+                      suffix: !googleAvailable ? "(Google CSE key required)" : "● Live",
+                    },
+                    {
+                      id: "web" as SourceType,
+                      label: "Open Web",
+                      live: googleAvailable,
+                      suffix: !googleAvailable ? "(Google CSE key required)" : "● Live",
+                    },
+                    {
+                      id: "perplexity" as SourceType,
+                      label: "Perplexity AI",
+                      live: perplexityAvailable,
+                      suffix: !perplexityAvailable ? "(API key required)" : "● Live",
+                    },
+                    {
+                      id: "github" as SourceType,
+                      label: "GitHub",
+                      live: true,
+                      suffix: "● Live",
+                    },
                     {
                       id: "pdl" as SourceType,
                       label: "People Data Labs",
-                      suffix: !pdlAvailable ? "(API key required)" : undefined,
+                      live: pdlAvailable,
+                      suffix: !pdlAvailable ? "(API key required)" : "● Live",
                     },
                   ]
-                ).map(({ id, label, suffix }) => (
+                ).map(({ id, label, live, suffix }) => (
                   <div key={id} className="flex items-center gap-2">
                     <Checkbox
                       id={`source-${id}`}
@@ -853,7 +909,9 @@ export default function Source() {
                     >
                       {label}
                       {suffix && (
-                        <span className="text-muted-foreground ml-1 font-normal">{suffix}</span>
+                        <span className={cn("ml-1 font-normal text-[10px]", live ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
+                          {suffix}
+                        </span>
                       )}
                     </Label>
                   </div>
@@ -931,12 +989,20 @@ export default function Source() {
 
         {/* Demo mode notice in search state */}
         {demoMode && (
-          <div className="mt-4 flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-4 py-2.5">
-            <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-            <p className="text-xs text-amber-700 dark:text-amber-300">
-              Demo mode — results are simulated.{" "}
-              <span className="font-semibold">Settings → API Keys</span> to enable live search.
+          <div className="mt-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-4 py-3 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+                Demo mode — results are simulated
+              </p>
+            </div>
+            <p className="text-xs text-amber-600 dark:text-amber-400 pl-6">
+              Add API keys in <span className="font-semibold">Settings → Sourcing APIs</span> to enable live search:
             </p>
+            <ul className="text-xs text-amber-600 dark:text-amber-400 pl-6 space-y-0.5 list-disc list-inside">
+              <li><span className="font-medium">Google CSE</span> — powers LinkedIn X-Ray &amp; Open Web search</li>
+              <li><span className="font-medium">Perplexity AI</span> — AI-powered web candidate discovery</li>
+            </ul>
           </div>
         )}
       </div>

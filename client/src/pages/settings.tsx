@@ -114,6 +114,47 @@ export default function Settings() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // Sourcing API keys
+  interface SourcingSettings {
+    googleCseKeySet: boolean; googleCseCxSet: boolean; perplexityKeySet: boolean;
+    googleCseKey: string; googleCseCx: string; perplexityKey: string;
+  }
+  const { data: sourcingSettings, refetch: refetchSourcing } = useQuery<SourcingSettings>({
+    queryKey: ["/api/sourcing/settings"],
+    queryFn: async () => {
+      const r = await fetch("/api/sourcing/settings", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+  });
+  const [gKey, setGKey] = useState("");
+  const [gCx, setGCx] = useState("");
+  const [plxKey, setPlxKey] = useState("");
+  const [showGKey, setShowGKey] = useState(false);
+  const [showPlxKey, setShowPlxKey] = useState(false);
+  const saveSourcingMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, string> = {};
+      if (gKey) body.googleCseKey = gKey;
+      if (gCx) body.googleCseCx = gCx;
+      if (plxKey) body.perplexityKey = plxKey;
+      const r = await fetch("/api/sourcing/settings", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error("Failed to save");
+      return r.json();
+    },
+    onSuccess: () => {
+      refetchSourcing();
+      queryClient.invalidateQueries({ queryKey: ["/api/sourcing/config"] });
+      setGKey(""); setGCx(""); setPlxKey("");
+      toast({ title: "Sourcing API keys saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   // QuickBooks
   const { data: qbStatus } = useQuery<QBStatus>({ queryKey: ["/api/qb/status"] });
 
@@ -1144,6 +1185,119 @@ export default function Settings() {
           </p>
         </CardContent>
       </Card>
+
+      {/* Sourcing API Keys — admin only */}
+      {adminUser && (
+        <Card className="border border-card-border">
+          <CardHeader>
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Globe size={14} />
+              Sourcing APIs
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Configure API keys for AI-powered candidate sourcing. Keys are stored securely and used by the Source page.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {/* Google CSE */}
+            <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-sm font-bold text-blue-600 dark:text-blue-400 flex-shrink-0">G</div>
+                <div>
+                  <p className="text-sm font-medium">Google Custom Search (X-Ray)</p>
+                  <p className="text-xs text-muted-foreground">LinkedIn X-Ray sourcing via Google CSE</p>
+                </div>
+                <Badge className={`ml-auto text-xs border-0 ${sourcingSettings?.googleCseKeySet && sourcingSettings?.googleCseCxSet ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+                  {sourcingSettings?.googleCseKeySet && sourcingSettings?.googleCseCxSet ? "Configured" : "Not Set"}
+                </Badge>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">API Key {sourcingSettings?.googleCseKeySet && <span className="text-green-600 dark:text-green-400">(set)</span>}</Label>
+                  <div className="relative">
+                    <Input
+                      type={showGKey ? "text" : "password"}
+                      placeholder={sourcingSettings?.googleCseKeySet ? "••••••••••••• (update)" : "AIza..."}
+                      value={gKey}
+                      onChange={e => setGKey(e.target.value)}
+                      className="h-9 text-sm font-mono pr-9"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowGKey(v => !v)}
+                    >
+                      {showGKey ? <EyeOff size={13} /> : <Eye size={13} />}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Search Engine ID (CX) {sourcingSettings?.googleCseCxSet && <span className="text-green-600 dark:text-green-400">(set)</span>}</Label>
+                  <Input
+                    type="text"
+                    placeholder={sourcingSettings?.googleCseCxSet ? "••••••••••••• (update)" : "017576662512468239146:omuauf..."}
+                    value={gCx}
+                    onChange={e => setGCx(e.target.value)}
+                    className="h-9 text-sm font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Perplexity */}
+            <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-sm font-bold text-purple-600 dark:text-purple-400 flex-shrink-0">P</div>
+                <div>
+                  <p className="text-sm font-medium">Perplexity AI</p>
+                  <p className="text-xs text-muted-foreground">AI-ranked candidate discovery (sonar-pro)</p>
+                </div>
+                <Badge className={`ml-auto text-xs border-0 ${sourcingSettings?.perplexityKeySet ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+                  {sourcingSettings?.perplexityKeySet ? "Configured" : "Not Set"}
+                </Badge>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">API Key {sourcingSettings?.perplexityKeySet && <span className="text-green-600 dark:text-green-400">(set)</span>}</Label>
+                <div className="relative">
+                  <Input
+                    type={showPlxKey ? "text" : "password"}
+                    placeholder={sourcingSettings?.perplexityKeySet ? "••••••••••••• (update)" : "pplx-..."}
+                    value={plxKey}
+                    onChange={e => setPlxKey(e.target.value)}
+                    className="h-9 text-sm font-mono pr-9"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowPlxKey(v => !v)}
+                  >
+                    {showPlxKey ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Button
+                size="sm"
+                className="gap-1.5 text-xs"
+                disabled={(!gKey && !gCx && !plxKey) || saveSourcingMutation.isPending}
+                onClick={() => saveSourcingMutation.mutate()}
+              >
+                {saveSourcingMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : null}
+                Save API Keys
+              </Button>
+              <p className="text-[11px] text-muted-foreground">Leave a field blank to keep the existing value.</p>
+            </div>
+
+            <div className="rounded-lg bg-muted/40 border border-border p-3 text-[11px] text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground text-xs flex items-center gap-1.5"><Info size={11} /> Setup instructions</p>
+              <p><strong>Google CSE:</strong> Create a Custom Search Engine at <code className="bg-muted px-1 rounded">programmablesearchengine.google.com</code>, set it to search the entire web, then get an API key from Google Cloud Console (Custom Search JSON API).</p>
+              <p className="mt-1"><strong>Perplexity:</strong> Get an API key from <code className="bg-muted px-1 rounded">perplexity.ai/settings/api</code>. The sonar-pro model is used for best candidate discovery results.</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Webhooks */}
       <Card className="border border-card-border">
