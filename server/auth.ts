@@ -6,17 +6,15 @@ import type { Express, Request, Response, NextFunction } from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import pg from "pg";
+import connectMemoryStore from "memorystore";
 
 const PgSession = connectPgSimple(session);
+const MemoryStore = connectMemoryStore(session);
 
 function buildSessionStore() {
   if (!process.env.DATABASE_URL) {
-    // Dev fallback when no DB is configured
-    const { default: connectMemoryStore } = require("memorystore");
-    const MemoryStore = connectMemoryStore(session);
     return new MemoryStore({ checkPeriod: 86400000 });
   }
-  // connect-pg-simple needs a standard pg Pool (not postgres.js)
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
@@ -32,7 +30,7 @@ function buildSessionStore() {
 export function setupAuth(app: Express) {
   app.use(
     session({
-      secret: process.env.SESSION_SECRET || "hirecommand-secret-2025",
+      secret: process.env.SESSION_SECRET || "hirecommand-dev-secret",
       resave: false,
       saveUninitialized: false,
       cookie: {

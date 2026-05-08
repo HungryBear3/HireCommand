@@ -484,7 +484,44 @@ async function seed() {
   }
 }
 
-// Only seed in development — never flood the production DB with fake data
+// Bootstrap admin user — runs in ALL environments on every startup.
+// Creates the initial admin account when no users exist yet (fresh DB).
+// Uses ADMIN_EMAIL / ADMIN_PASSWORD env vars; falls back to safe defaults that
+// are printed to the server console so the operator can log in on first boot.
+async function bootstrapAdmin() {
+  if (!process.env.DATABASE_URL) return;
+  try {
+    const existing = await db.select().from(users);
+    if (existing.length > 0) return;
+
+    const email    = process.env.ADMIN_EMAIL    || "admin@hirecommand.com";
+    const password = process.env.ADMIN_PASSWORD || "ChangeMe123!";
+
+    const bcrypt = await import("bcrypt");
+    const hashed = await bcrypt.hash(password, 10);
+    await db.insert(users).values({
+      email,
+      username: email,
+      password: hashed,
+      role: "admin",
+      recruiterName: "Admin",
+    });
+
+    console.log(`[bootstrap] ✅ Admin user created`);
+    console.log(`[bootstrap]    Email:    ${email}`);
+    if (!process.env.ADMIN_PASSWORD) {
+      console.log(`[bootstrap]    Password: ${password}  ← SET ADMIN_PASSWORD env var and log in to change this`);
+    }
+  } catch (err: any) {
+    console.error("[bootstrap] Failed to create admin user:", err.message);
+  }
+}
+
+if (process.env.DATABASE_URL) {
+  bootstrapAdmin().catch(err => console.error("[bootstrap] Error:", err.message));
+}
+
+// Only seed demo data in development — never flood the production DB with fake data
 if (process.env.DATABASE_URL && process.env.NODE_ENV !== "production") {
   seed().catch(err => console.error("[seed] Failed:", err.message));
 }
