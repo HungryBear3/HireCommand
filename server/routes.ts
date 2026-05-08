@@ -7,6 +7,8 @@ import { registerSourcingRoutes } from "./sourcing";
 import { registerQBRoutes } from "./quickbooks";
 import { registerLinkedInSyncRoutes, checkAndRunStartupSync } from "./linkedin-sync";
 import { registerCandidateImportRoutes } from "./candidate-import";
+import { registerSchedulingRoutes } from "./scheduling";
+import { registerRediscoveryRoutes } from "./rediscovery";
 import { insertInvoiceSchema } from "@shared/schema";
 import passport from "passport";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
@@ -639,6 +641,12 @@ export async function registerRoutes(
 
   // ======================== LINKEDIN PROFILE SYNC ========================
   registerLinkedInSyncRoutes(app);
+
+  // ======================== AI SCHEDULING ASSISTANT ========================
+  registerSchedulingRoutes(app);
+
+  // ======================== AI TALENT REDISCOVERY ========================
+  registerRediscoveryRoutes(app);
 
   // ======================== OPEN API / SWAGGER ========================
   registerOpenApi(app);

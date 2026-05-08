@@ -189,6 +189,27 @@ export const settings = pgTable("settings", {
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).pick({ username: true, password: true });
 export const insertCandidateSchema = createInsertSchema(candidates).omit({ id: true });
+export const schedulingSessions = pgTable("scheduling_sessions", {
+  id: serial("id").primaryKey(),
+  candidateId: integer("candidate_id").notNull(),
+  candidateName: text("candidate_name").notNull(),
+  candidateEmail: text("candidate_email").notNull().default(""),
+  jobId: integer("job_id"),
+  jobTitle: text("job_title").notNull(),
+  company: text("company").notNull(),
+  contactName: text("contact_name").notNull(),
+  contactEmail: text("contact_email").notNull().default(""),
+  interviewType: text("interview_type").notNull().default("first_round"),
+  proposedTimes: text("proposed_times").notNull().default("[]"),
+  candidateDraft: text("candidate_draft").notNull().default(""),
+  contactDraft: text("contact_draft").notNull().default(""),
+  status: text("status").notNull().default("drafting"),
+  confirmedTime: text("confirmed_time"),
+  notes: text("notes").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const insertJobSchema = createInsertSchema(jobs).omit({ id: true });
 export const insertOpportunitySchema = createInsertSchema(opportunities).omit({ id: true });
 export const insertCampaignSchema = createInsertSchema(campaigns).omit({ id: true });
@@ -197,6 +218,7 @@ export const insertInterviewSchema = createInsertSchema(interviews).omit({ id: t
 export const insertPlacementSchema = createInsertSchema(placements).omit({ id: true });
 export const insertCommissionSplitSchema = createInsertSchema(commissionSplits).omit({ id: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true });
+export const insertSchedulingSessionSchema = createInsertSchema(schedulingSessions).omit({ id: true });
 
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -219,3 +241,5 @@ export type CommissionSplit = typeof commissionSplits.$inferSelect;
 export type InsertCommissionSplit = z.infer<typeof insertCommissionSplitSchema>;
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+export type SchedulingSession = typeof schedulingSessions.$inferSelect;
+export type InsertSchedulingSession = z.infer<typeof insertSchedulingSessionSchema>;

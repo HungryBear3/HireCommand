@@ -18,6 +18,8 @@ import {
   Zap,
   FileText,
   LogOut,
+  CalendarDays,
+  Sparkles,
 } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import { cn } from "@/lib/utils";
@@ -32,6 +34,8 @@ const navItems = [
   { href: "/clients", icon: Building2, label: "Client Portal" },
   { href: "/outreach", icon: Send, label: "Outreach" },
   { href: "/ai", icon: Bot, label: "AI Assistant" },
+  { href: "/scheduling", icon: CalendarDays, label: "Scheduling" },
+  { href: "/rediscovery", icon: Sparkles, label: "Rediscovery" },
   { href: "/interviews", icon: ClipboardList, label: "Interviews" },
   { href: "/revenue", icon: DollarSign, label: "Revenue" },
   { href: "/invoices", icon: FileText, label: "Invoices" },

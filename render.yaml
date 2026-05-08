@@ -10,6 +10,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: "--dns-result-order=ipv4first"
       - key: DATABASE_URL
         sync: false          # set manually in Render dashboard
       - key: LOXO_API_KEY
@@ -30,3 +32,5 @@ services:
         sync: false          # optional — for AI sourcing
       - key: PDL_API_KEY
         sync: false          # optional — for candidate enrichment
+      - key: ANTHROPIC_API_KEY
+        sync: false          # required — for AI Scheduling Assistant + Talent Rediscovery

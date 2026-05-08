@@ -24,6 +24,8 @@ import ClientPortal from "@/pages/client-portal";
 import Revenue from "@/pages/revenue";
 import Source from "@/pages/source";
 import Invoices from "@/pages/invoices";
+import Scheduling from "@/pages/scheduling";
+import TalentRediscovery from "@/pages/rediscovery";
 import Login from "@/pages/login";
 import { useCurrentUser } from "@/lib/auth";
 
@@ -45,6 +47,8 @@ function AppRouter() {
       <Route path="/revenue" component={Revenue} />
       <Route path="/invoices" component={Invoices} />
       <Route path="/settings" component={Settings} />
+      <Route path="/scheduling" component={Scheduling} />
+      <Route path="/rediscovery" component={TalentRediscovery} />
       <Route component={NotFound} />
     </Switch>
   );
