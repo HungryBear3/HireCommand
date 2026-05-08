@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertCandidateSchema, insertJobSchema, insertActivitySchema, insertInterviewSchema, insertOpportunitySchema } from "@shared/schema";
+import { insertCandidateSchema, insertJobSchema, insertActivitySchema, insertInterviewSchema, insertOpportunitySchema, insertCampaignSchema } from "@shared/schema";
 import { registerOpenApi } from "./openapi";
 import { registerSourcingRoutes } from "./sourcing";
 import { registerQBRoutes } from "./quickbooks";
@@ -202,6 +202,24 @@ export async function registerRoutes(
     const data = await storage.getCampaign(Number(req.params.id));
     if (!data) return res.status(404).json({ error: "Not found" });
     res.json(data);
+  });
+
+  app.post("/api/campaigns", async (req, res) => {
+    const parsed = insertCampaignSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const data = await storage.createCampaign(parsed.data);
+    res.status(201).json(data);
+  });
+
+  app.patch("/api/campaigns/:id", async (req, res) => {
+    const data = await storage.updateCampaign(Number(req.params.id), req.body);
+    if (!data) return res.status(404).json({ error: "Not found" });
+    res.json(data);
+  });
+
+  app.delete("/api/campaigns/:id", async (req, res) => {
+    await storage.deleteCampaign(Number(req.params.id));
+    res.status(204).send();
   });
 
   // ======================== ACTIVITIES ========================

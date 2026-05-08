@@ -102,6 +102,9 @@ export interface IStorage {
   deleteOpportunity(id: number): Promise<void>;
   getCampaigns(): Promise<Campaign[]>;
   getCampaign(id: number): Promise<Campaign | undefined>;
+  createCampaign(c: InsertCampaign): Promise<Campaign>;
+  updateCampaign(id: number, c: Partial<InsertCampaign>): Promise<Campaign | undefined>;
+  deleteCampaign(id: number): Promise<void>;
   getActivities(): Promise<Activity[]>;
   createActivity(a: InsertActivity): Promise<Activity>;
   getInterviews(): Promise<Interview[]>;
@@ -224,6 +227,17 @@ export class DatabaseStorage implements IStorage {
   async getCampaign(id: number) {
     const rows = await db.select().from(campaigns).where(eq(campaigns.id, id));
     return rows[0];
+  }
+  async createCampaign(c: InsertCampaign) {
+    const rows = await db.insert(campaigns).values(c).returning();
+    return rows[0];
+  }
+  async updateCampaign(id: number, c: Partial<InsertCampaign>) {
+    const rows = await db.update(campaigns).set(c).where(eq(campaigns.id, id)).returning();
+    return rows[0];
+  }
+  async deleteCampaign(id: number) {
+    await db.delete(campaigns).where(eq(campaigns.id, id));
   }
 
   async getActivities() {
