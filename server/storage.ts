@@ -2,6 +2,7 @@ import {
   type User, type InsertUser, users,
   type Candidate, type InsertCandidate, candidates,
   type Job, type InsertJob, jobs,
+  type CandidateJobAssignment, type InsertCandidateJobAssignment, candidateJobAssignments,
   type Opportunity, type InsertOpportunity, opportunities,
   type Campaign, type InsertCampaign, campaigns,
   type Activity, type InsertActivity, activities,
@@ -13,7 +14,7 @@ import {
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc, sql } from "drizzle-orm";
 if (!process.env.DATABASE_URL) {
   console.error("[storage] WARNING: DATABASE_URL not set — DB calls will fail");
 }
@@ -33,6 +34,24 @@ const client = postgres(connectionURL, {
 });
 export const db = drizzle(client);
 
+async function ensureRuntimeSchema() {
+  if (!process.env.DATABASE_URL) return;
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS candidate_job_assignments (
+      id serial PRIMARY KEY,
+      candidate_id integer NOT NULL,
+      job_id integer NOT NULL,
+      status text NOT NULL DEFAULT 'submitted',
+      notes text NOT NULL DEFAULT '',
+      created_at text NOT NULL,
+      updated_at text NOT NULL,
+      UNIQUE(candidate_id, job_id)
+    )
+  `);
+}
+
+ensureRuntimeSchema().catch((err) => console.error("[schema] Failed to ensure runtime schema:", err.message));
+
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -45,6 +64,9 @@ export interface IStorage {
   createCandidate(c: InsertCandidate): Promise<Candidate>;
   updateCandidate(id: number, c: Partial<InsertCandidate>): Promise<Candidate | undefined>;
   deleteCandidate(id: number): Promise<void>;
+  getCandidateJobs(candidateId: number): Promise<Job[]>;
+  addCandidateToJob(candidateId: number, jobId: number): Promise<CandidateJobAssignment>;
+  removeCandidateFromJob(candidateId: number, jobId: number): Promise<void>;
   getJobs(): Promise<Job[]>;
   getJob(id: number): Promise<Job | undefined>;
   createJob(j: InsertJob): Promise<Job>;
@@ -136,6 +158,41 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteCandidate(id: number) {
     await db.delete(candidates).where(eq(candidates.id, id));
+  }
+
+  async getCandidateJobs(candidateId: number) {
+    const rows = await db
+      .select({ job: jobs })
+      .from(candidateJobAssignments)
+      .innerJoin(jobs, eq(candidateJobAssignments.jobId, jobs.id))
+      .where(eq(candidateJobAssignments.candidateId, candidateId));
+    return rows.map((row) => row.job);
+  }
+  async addCandidateToJob(candidateId: number, jobId: number) {
+    const now = new Date().toISOString();
+    const existing = await db
+      .select()
+      .from(candidateJobAssignments)
+      .where(and(eq(candidateJobAssignments.candidateId, candidateId), eq(candidateJobAssignments.jobId, jobId)));
+    if (existing[0]) return existing[0];
+
+    const assignment: InsertCandidateJobAssignment = {
+      candidateId,
+      jobId,
+      status: "submitted",
+      notes: "",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const rows = await db.insert(candidateJobAssignments).values(assignment).returning();
+    await db.update(jobs).set({ candidateCount: sql`${jobs.candidateCount} + 1` as any }).where(eq(jobs.id, jobId));
+    return rows[0];
+  }
+  async removeCandidateFromJob(candidateId: number, jobId: number) {
+    await db
+      .delete(candidateJobAssignments)
+      .where(and(eq(candidateJobAssignments.candidateId, candidateId), eq(candidateJobAssignments.jobId, jobId)));
+    await db.update(jobs).set({ candidateCount: sql`greatest(${jobs.candidateCount} - 1, 0)` as any }).where(eq(jobs.id, jobId));
   }
 
   async getJobs() {

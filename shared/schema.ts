@@ -48,6 +48,16 @@ export const jobs = pgTable("jobs", {
   requirements: text("requirements").notNull(), // JSON array
 });
 
+export const candidateJobAssignments = pgTable("candidate_job_assignments", {
+  id: serial("id").primaryKey(),
+  candidateId: integer("candidate_id").notNull(),
+  jobId: integer("job_id").notNull(),
+  status: text("status").notNull().default("submitted"),
+  notes: text("notes").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const opportunities = pgTable("opportunities", {
   id: serial("id").primaryKey(),
   company: text("company").notNull(),
@@ -211,6 +221,7 @@ export const schedulingSessions = pgTable("scheduling_sessions", {
 });
 
 export const insertJobSchema = createInsertSchema(jobs).omit({ id: true });
+export const insertCandidateJobAssignmentSchema = createInsertSchema(candidateJobAssignments).omit({ id: true });
 export const insertOpportunitySchema = createInsertSchema(opportunities).omit({ id: true });
 export const insertCampaignSchema = createInsertSchema(campaigns).omit({ id: true });
 export const insertActivitySchema = createInsertSchema(activities).omit({ id: true });
@@ -227,6 +238,8 @@ export type Candidate = typeof candidates.$inferSelect;
 export type InsertCandidate = z.infer<typeof insertCandidateSchema>;
 export type Job = typeof jobs.$inferSelect;
 export type InsertJob = z.infer<typeof insertJobSchema>;
+export type CandidateJobAssignment = typeof candidateJobAssignments.$inferSelect;
+export type InsertCandidateJobAssignment = z.infer<typeof insertCandidateJobAssignmentSchema>;
 export type Opportunity = typeof opportunities.$inferSelect;
 export type InsertOpportunity = z.infer<typeof insertOpportunitySchema>;
 export type Campaign = typeof campaigns.$inferSelect;

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { Candidate } from "@shared/schema";
+import type { Candidate, Job } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,7 @@ import {
   AlertCircle,
   History,
   Upload,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -64,6 +65,7 @@ const statusColors: Record<string, string> = {
 const FUNCTION_OPTIONS = [
   { label: "All Functions", value: "all" },
   { label: "CFO / Finance", value: "CFO / Finance", keywords: ["CFO", "VP Finance", "Finance", "Chief Financial"] },
+  { label: "CAO / Accounting", value: "CAO / Accounting", keywords: ["CAO", "Chief Accounting", "Chief Accountant", "Controller", "Accounting", "Accountant", "SEC Reporting", "Technical Accounting", "Corporate Controller", "VP Accounting"] },
   { label: "CTO / Technology", value: "CTO / Technology", keywords: ["CTO", "VP Engineering", "Technology", "Chief Technology", "Engineering"] },
   { label: "COO / Operations", value: "COO / Operations", keywords: ["COO", "VP Operations", "Operations", "Chief Operating"] },
   { label: "CHRO / People", value: "CHRO / People", keywords: ["CHRO", "VP People", "People", "HR", "Human Resources", "Chief People"] },
@@ -842,6 +844,18 @@ function CandidateDetail({
 }) {
   const { toast } = useToast();
   const [candidate, setCandidate] = useState<Candidate>(initialCandidate);
+  const [selectedJobId, setSelectedJobId] = useState("");
+
+  const { data: jobs = [] } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
+  const activeJobs = jobs.filter((job) => job.stage !== "closed");
+  const { data: assignedJobs = [] } = useQuery<Job[]>({
+    queryKey: ["/api/candidates", candidate.id, "jobs"],
+    queryFn: async () => {
+      const res = await fetch(`/api/candidates/${candidate.id}/jobs`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load candidate jobs");
+      return res.json();
+    },
+  });
 
   const tags: string[] = (() => {
     try { return JSON.parse(candidate.tags); } catch { return []; }
@@ -895,6 +909,23 @@ function CandidateDetail({
     },
     onError: (err: Error) => {
       toast({ title: "Sync failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const addToJobMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const res = await apiRequest("POST", `/api/candidates/${candidate.id}/jobs`, { jobId: Number(jobId) });
+      return res.json();
+    },
+    onSuccess: () => {
+      const job = activeJobs.find((j) => String(j.id) === selectedJobId);
+      setSelectedJobId("");
+      queryClient.invalidateQueries({ queryKey: ["/api/candidates", candidate.id, "jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      toast({ title: "Added to job", description: job ? `${candidate.name} was added to ${job.title}.` : "Candidate was added to the active job." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not add to job", description: err.message, variant: "destructive" });
     },
   });
 
@@ -1044,6 +1075,61 @@ function CandidateDetail({
           <Sparkles size={13} /> Pipeline
         </Button>
       </div>
+
+      {/* Active Job Assignment */}
+      <Card className="border border-card-border">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold flex items-center gap-1.5">
+              <Briefcase size={13} className="text-primary" /> Active Jobs
+            </h3>
+            <Badge variant="secondary" className="text-[10px]">
+              {assignedJobs.length} assigned
+            </Badge>
+          </div>
+
+          <div className="flex gap-2">
+            <Select value={selectedJobId} onValueChange={setSelectedJobId}>
+              <SelectTrigger className="h-8 flex-1 text-sm" data-testid="select-candidate-active-job">
+                <SelectValue placeholder="Add to active job..." />
+              </SelectTrigger>
+              <SelectContent>
+                {activeJobs.length === 0 ? (
+                  <SelectItem value="no-active-jobs" disabled>No active jobs</SelectItem>
+                ) : (
+                  activeJobs.map((job) => (
+                    <SelectItem key={job.id} value={String(job.id)}>
+                      {job.title} — {job.company}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              className="h-8 gap-1.5"
+              disabled={!selectedJobId || selectedJobId === "no-active-jobs" || addToJobMutation.isPending}
+              onClick={() => addToJobMutation.mutate(selectedJobId)}
+              data-testid="button-add-candidate-to-job"
+            >
+              <Plus size={13} /> Add
+            </Button>
+          </div>
+
+          <div className="space-y-1.5">
+            {assignedJobs.length > 0 ? (
+              assignedJobs.map((job) => (
+                <div key={job.id} className="rounded-md border border-border px-3 py-2 text-sm">
+                  <p className="font-medium">{job.title}</p>
+                  <p className="text-xs text-muted-foreground">{job.company} · {job.stage}</p>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground">Not attached to any active jobs yet.</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Tags */}
       <div className="space-y-2">

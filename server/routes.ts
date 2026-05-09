@@ -132,6 +132,32 @@ export async function registerRoutes(
     res.status(204).end();
   });
 
+  app.get("/api/candidates/:id/jobs", async (req, res) => {
+    const candidateId = Number(req.params.id);
+    const candidate = await storage.getCandidate(candidateId);
+    if (!candidate) return res.status(404).json({ error: "Candidate not found" });
+    const data = await storage.getCandidateJobs(candidateId);
+    res.json(data);
+  });
+
+  app.post("/api/candidates/:id/jobs", async (req, res) => {
+    const candidateId = Number(req.params.id);
+    const jobId = Number(req.body?.jobId);
+    if (!jobId) return res.status(400).json({ error: "jobId is required" });
+    const candidate = await storage.getCandidate(candidateId);
+    if (!candidate) return res.status(404).json({ error: "Candidate not found" });
+    const job = await storage.getJob(jobId);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    if (job.stage === "closed") return res.status(400).json({ error: "Cannot add candidates to a closed job" });
+    const data = await storage.addCandidateToJob(candidateId, jobId);
+    res.status(201).json(data);
+  });
+
+  app.delete("/api/candidates/:id/jobs/:jobId", async (req, res) => {
+    await storage.removeCandidateFromJob(Number(req.params.id), Number(req.params.jobId));
+    res.status(204).end();
+  });
+
   // ======================== JOBS ========================
   app.get("/api/jobs", async (_req, res) => {
     const data = await storage.getJobs();
