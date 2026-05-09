@@ -26,6 +26,9 @@ import { setupAuth } from "./auth";
 import { storage } from "./storage";
 
 const app = express();
+// Render terminates TLS at its proxy. Trusting the first proxy lets Express
+// recognize HTTPS requests so secure session cookies are actually emitted.
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 declare module "http" {
