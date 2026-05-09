@@ -14,9 +14,9 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2 } from "lucide-react";
+import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2, Archive, RotateCcw } from "lucide-react";
 
-const STAGES = [
+const ACTIVE_STAGES = [
   { key: "intake",     label: "Intake",     color: "bg-slate-400" },
   { key: "sourcing",   label: "Sourcing",   color: "bg-blue-500" },
   { key: "screening",  label: "Screening",  color: "bg-cyan-500" },
@@ -24,6 +24,9 @@ const STAGES = [
   { key: "offer",      label: "Offer",      color: "bg-purple-500" },
   { key: "placed",     label: "Placed",     color: "bg-green-500" },
 ];
+
+const CLOSED_STAGE = { key: "closed", label: "Closed", color: "bg-zinc-500" };
+const STAGES = [...ACTIVE_STAGES, CLOSED_STAGE];
 
 interface JobForm {
   title: string; company: string; location: string;
@@ -146,8 +149,11 @@ export default function Jobs() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
+  const activeJobs = jobs.filter(job => job.stage !== "closed");
+  const closedJobs = jobs.filter(job => job.stage === "closed");
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/jobs/${id}`); },
@@ -167,7 +173,9 @@ export default function Jobs() {
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
       setSelectedJob(updated);
+      toast({ title: updated.stage === "closed" ? "Job closed" : "Job updated" });
     },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   return (
@@ -175,21 +183,31 @@ export default function Jobs() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display font-bold text-xl">Jobs</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{jobs.length} active search{jobs.length !== 1 ? "es" : ""}</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {activeJobs.length} active search{activeJobs.length !== 1 ? "es" : ""}
+            {closedJobs.length > 0 ? ` · ${closedJobs.length} closed` : ""}
+          </p>
         </div>
-        <JobFormDialog
-          dialogTitle="Add New Job"
-          trigger={<Button size="sm" className="gap-1.5"><Plus size={14} /> New Job</Button>}
-          onDone={() => {}}
-        />
+        <div className="flex items-center gap-2">
+          {closedJobs.length > 0 && (
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowClosed(v => !v)}>
+              <Archive size={14} /> {showClosed ? "Hide Closed" : "Closed Jobs"}
+            </Button>
+          )}
+          <JobFormDialog
+            dialogTitle="Add New Job"
+            trigger={<Button size="sm" className="gap-1.5"><Plus size={14} /> New Job</Button>}
+            onDone={() => {}}
+          />
+        </div>
       </div>
 
       {isLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-8"><Loader2 size={14} className="animate-spin" /> Loading…</div>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-4 -mx-1 px-1">
-          {STAGES.map(stage => {
-            const stageJobs = jobs.filter(j => j.stage === stage.key);
+          {ACTIVE_STAGES.map(stage => {
+            const stageJobs = activeJobs.filter(j => j.stage === stage.key);
             return (
               <div key={stage.key} className="flex-shrink-0 w-[260px]">
                 <div className="flex items-center gap-2 mb-3 px-1">
@@ -223,6 +241,36 @@ export default function Jobs() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {!isLoading && showClosed && (
+        <div className="rounded-xl border border-card-border bg-card/60 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Archive size={15} className="text-muted-foreground" />
+            <h2 className="font-semibold text-sm">Closed Jobs</h2>
+            <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{closedJobs.length}</Badge>
+          </div>
+          {closedJobs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No closed jobs.</p>
+          ) : (
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+              {closedJobs.map(job => (
+                <Card key={job.id} className="border border-card-border hover:border-primary/30 transition-colors cursor-pointer" onClick={() => setSelectedJob(job)}>
+                  <CardContent className="p-3 space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold leading-tight">{job.title}</p>
+                        <p className="text-xs text-muted-foreground">{job.company}</p>
+                      </div>
+                      <Badge variant="secondary" className="text-[10px]">Closed</Badge>
+                    </div>
+                    {job.feePotential && <div className="flex items-center gap-1 text-xs font-medium text-primary"><DollarSign size={11} />{job.feePotential}</div>}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -272,6 +320,9 @@ export default function Jobs() {
                       </button>
                     ))}
                   </div>
+                  {selectedJob.stage === "closed" && (
+                    <p className="text-xs text-muted-foreground">Closed jobs are hidden from the active pipeline.</p>
+                  )}
                 </div>
 
                 {selectedJob.description && (
@@ -302,6 +353,19 @@ export default function Jobs() {
                     trigger={<Button size="sm" variant="outline" className="gap-1.5 flex-1"><Pencil size={13} /> Edit</Button>}
                     onDone={() => queryClient.invalidateQueries({ queryKey: ["/api/jobs"] })}
                   />
+                  {selectedJob.stage === "closed" ? (
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                      onClick={() => stageMutation.mutate({ id: selectedJob.id, stage: "intake" })}
+                      disabled={stageMutation.isPending}>
+                      <RotateCcw size={13} /> Reopen
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" className="gap-1.5"
+                      onClick={() => { if (confirm(`Close "${selectedJob.title}" and remove it from the active pipeline?`)) stageMutation.mutate({ id: selectedJob.id, stage: "closed" }); }}
+                      disabled={stageMutation.isPending}>
+                      <Archive size={13} /> Close
+                    </Button>
+                  )}
                   <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive"
                     onClick={() => { if (confirm(`Delete "${selectedJob.title}"?`)) deleteMutation.mutate(selectedJob.id); }}
                     disabled={deleteMutation.isPending}>

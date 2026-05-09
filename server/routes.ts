@@ -274,6 +274,8 @@ export async function registerRoutes(
       storage.getPlacements(),
     ]);
 
+    const activeJobs = allJobs.filter((job) => job.stage !== "closed");
+
     const now = new Date();
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - now.getDay());
@@ -304,13 +306,13 @@ export async function registerRoutes(
     const placedCandidates = allPlacements.length;
 
     res.json({
-      activeJobs: allJobs.length,
+      activeJobs: activeJobs.length,
       pipelineCandidates: allCandidates.length,
       interviewsThisWeek,
       placementsMTD,
       revenueMTD: fmtRevenue(revenueMTD),
-      avgTimeToFill: allJobs.length > 0
-        ? Math.round(allJobs.reduce((s, j) => s + (j.daysOpen || 0), 0) / allJobs.length)
+      avgTimeToFill: activeJobs.length > 0
+        ? Math.round(activeJobs.reduce((s, j) => s + (j.daysOpen || 0), 0) / activeJobs.length)
         : 0,
       pipeline: {
         sourced: allCandidates.filter(c => c.status === "sourced").length,
@@ -580,8 +582,8 @@ export async function registerRoutes(
           else if (statusName.includes("screen")) stage = "screening";
           else if (statusName.includes("interview")) stage = "interview";
           else if (statusName.includes("offer")) stage = "offer";
-          else if (statusName.includes("placed") || statusName.includes("filled") || statusName.includes("closed")) stage = "placed";
-          else if (statusName.includes("inactive")) stage = "placed"; // closed out
+          else if (statusName.includes("placed") || statusName.includes("filled")) stage = "placed";
+          else if (statusName.includes("closed") || statusName.includes("inactive")) stage = "closed"; // closed out
 
           const location = [j.city, j.state_code].filter(Boolean).join(", ") || j.macro_address || "";
           const companyName = j.company?.name || "Unknown Company";

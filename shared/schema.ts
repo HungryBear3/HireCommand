@@ -40,7 +40,7 @@ export const jobs = pgTable("jobs", {
   title: text("title").notNull(),
   company: text("company").notNull(),
   location: text("location").notNull(),
-  stage: text("stage").notNull(), // intake, sourcing, screening, interview, offer, placed
+  stage: text("stage").notNull(), // intake, sourcing, screening, interview, offer, placed, closed
   candidateCount: integer("candidate_count").notNull(),
   daysOpen: integer("days_open").notNull(),
   feePotential: text("fee_potential").notNull(),
