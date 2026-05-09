@@ -82,6 +82,34 @@ function matchesFunction(title: string, functionValue: string): boolean {
   return option.keywords.some((kw) => lower.includes(kw.toLowerCase()));
 }
 
+function zipCodesFrom(text: string): string[] {
+  return text.match(/\b\d{5}(?:-\d{4})?\b/g)?.map((zip) => zip.slice(0, 5)) ?? [];
+}
+
+function matchesLocation(candidateLocation: string, selectedLocation: string, locationSearch: string): boolean {
+  const location = candidateLocation.toLowerCase();
+  if (selectedLocation !== "all" && candidateLocation !== selectedLocation) return false;
+
+  const query = locationSearch.trim().toLowerCase();
+  if (!query) return true;
+
+  const queryZips = zipCodesFrom(query);
+  if (queryZips.length > 0) {
+    const candidateZips = zipCodesFrom(candidateLocation);
+    if (candidateZips.some((zip) => queryZips.includes(zip))) return true;
+    // If exact ZIPs are unavailable in the imported location text, prefix matching
+    // still makes searches like "606" or "60601" useful for nearby ZIP clusters.
+    return queryZips.some((queryZip) => candidateZips.some((zip) => zip.slice(0, 3) === queryZip.slice(0, 3)));
+  }
+
+  const numericPrefix = query.match(/^\d{3,4}$/)?.[0];
+  if (numericPrefix) {
+    return zipCodesFrom(candidateLocation).some((zip) => zip.startsWith(numericPrefix));
+  }
+
+  return location.includes(query);
+}
+
 function ScoreBar({ score }: { score: number }) {
   const color = score >= 90 ? "bg-green-500" : score >= 80 ? "bg-blue-500" : "bg-amber-500";
   return (
@@ -439,6 +467,7 @@ export default function Candidates() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [functionFilter, setFunctionFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
+  const [locationSearch, setLocationSearch] = useState("");
   const [scoreFilter, setScoreFilter] = useState("all");
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [magicColumns, setMagicColumns] = useState(false);
@@ -458,6 +487,7 @@ export default function Candidates() {
     statusFilter !== "all",
     functionFilter !== "all",
     locationFilter !== "all",
+    locationSearch.trim() !== "",
     scoreFilter !== "all",
   ].filter(Boolean).length;
 
@@ -465,6 +495,7 @@ export default function Candidates() {
     setStatusFilter("all");
     setFunctionFilter("all");
     setLocationFilter("all");
+    setLocationSearch("");
     setScoreFilter("all");
     setSearch("");
   }
@@ -472,7 +503,7 @@ export default function Candidates() {
   const filtered = candidates.filter((c) => {
     if (statusFilter !== "all" && c.status !== statusFilter) return false;
     if (functionFilter !== "all" && !matchesFunction(c.title, functionFilter)) return false;
-    if (locationFilter !== "all" && c.location !== locationFilter) return false;
+    if (!matchesLocation(c.location, locationFilter, locationSearch)) return false;
     if (scoreFilter === "90plus" && c.matchScore < 90) return false;
     if (scoreFilter === "80to89" && (c.matchScore < 80 || c.matchScore > 89)) return false;
     if (scoreFilter === "below80" && c.matchScore >= 80) return false;
@@ -576,19 +607,28 @@ export default function Candidates() {
         </Select>
 
         {/* Location filter */}
-        <Select value={locationFilter} onValueChange={setLocationFilter}>
-          <SelectTrigger className="h-8 w-[145px] text-sm" data-testid="select-location-filter">
-            <SelectValue placeholder="Location" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Locations</SelectItem>
-            {uniqueLocations.map((loc) => (
-              <SelectItem key={loc} value={loc}>
-                {loc}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-1.5">
+          <Select value={locationFilter} onValueChange={setLocationFilter}>
+            <SelectTrigger className="h-8 w-[145px] text-sm" data-testid="select-location-filter">
+              <SelectValue placeholder="Location" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Locations</SelectItem>
+              {uniqueLocations.map((loc) => (
+                <SelectItem key={loc} value={loc}>
+                  {loc}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            value={locationSearch}
+            onChange={(e) => setLocationSearch(e.target.value)}
+            placeholder="City, state, or ZIP"
+            className="h-8 w-[170px] text-sm"
+            data-testid="input-location-filter"
+          />
+        </div>
 
         {/* Match Score filter */}
         <Select value={scoreFilter} onValueChange={setScoreFilter}>
