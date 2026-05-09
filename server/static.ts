@@ -10,14 +10,17 @@ export function serveStatic(app: Express) {
     );
   }
 
-  // Serve static assets (JS, CSS, images)
+  // Serve static assets (JS, CSS, images, etc.) — never touches /api/ paths
+  // because those files don't exist in distPath
   app.use(express.static(distPath));
 
-  // SPA fallback — explicitly guard /api/ routes so they return 404 JSON
-  // instead of index.html. Express 5's wildcard app.use catches API routes
-  // before specific route handlers fire, breaking all API endpoints.
-  app.use((req, res) => {
+  // SPA fallback: serve index.html for any non-API route so client-side
+  // routing works. Explicitly guard /api/ so a missing API route returns
+  // a proper 404 JSON instead of the HTML shell (Express 5 wildcard catch-alls
+  // can match before specific route handlers in some configurations).
+  app.use((req, res, next) => {
     if (req.path.startsWith("/api/")) {
+      // Let Express return its default 404 — don't swallow API 404s as HTML
       return res.status(404).json({ error: `Cannot ${req.method} ${req.path}` });
     }
     res.sendFile(path.resolve(distPath, "index.html"));
