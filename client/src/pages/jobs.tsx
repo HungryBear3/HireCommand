@@ -72,15 +72,18 @@ function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
     mutationFn: async () => {
       if (!form.title || !form.company) throw new Error("Title and company are required");
       const payload = formToPayload(form);
-      if (jobId) {
-        await apiRequest("PATCH", `/api/jobs/${jobId}`, payload);
-      } else {
-        await apiRequest("POST", "/api/jobs", payload);
-      }
+      const r = jobId
+        ? await apiRequest("PATCH", `/api/jobs/${jobId}`, payload)
+        : await apiRequest("POST", "/api/jobs", payload);
+      return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
-      toast({ title: jobId ? "Job updated" : "Job created" });
+      const matchCount = Array.isArray(data?.aiMatches) ? data.aiMatches.length : 0;
+      toast({
+        title: jobId ? "Job updated" : "Job created",
+        description: !jobId ? `AI sourced ${matchCount} matching candidate${matchCount === 1 ? "" : "s"} from the database.` : undefined,
+      });
       setOpen(false);
       onDone();
     },

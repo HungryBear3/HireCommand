@@ -15,7 +15,7 @@ export async function callClaude(
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-6",
+      model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
       max_tokens: maxTokens,
       system,
       messages: [{ role: "user", content: prompt }],

@@ -8,7 +8,7 @@ import { registerQBRoutes } from "./quickbooks";
 import { registerLinkedInSyncRoutes, checkAndRunStartupSync } from "./linkedin-sync";
 import { registerCandidateImportRoutes } from "./candidate-import";
 import { registerSchedulingRoutes } from "./scheduling";
-import { registerRediscoveryRoutes } from "./rediscovery";
+import { registerRediscoveryRoutes, sourceCandidatesForJob } from "./rediscovery";
 import { insertInvoiceSchema } from "@shared/schema";
 import passport from "passport";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
@@ -174,7 +174,13 @@ export async function registerRoutes(
     const parsed = insertJobSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const data = await storage.createJob(parsed.data);
-    res.status(201).json(data);
+    let aiMatches: Awaited<ReturnType<typeof sourceCandidatesForJob>> = [];
+    try {
+      aiMatches = await sourceCandidatesForJob(data);
+    } catch (e: any) {
+      console.error("[jobs] automatic AI candidate sourcing failed:", e.message);
+    }
+    res.status(201).json({ ...data, aiMatches, candidateCount: aiMatches.length });
   });
 
   app.patch("/api/jobs/:id", async (req, res) => {
