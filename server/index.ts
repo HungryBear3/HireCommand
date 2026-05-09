@@ -1,7 +1,22 @@
 import dns from "dns";
 // Force IPv4 DNS resolution before any module creates a DB connection.
-// Supabase pooler rejects IPv6 connections with "XX000 Tenant or user not found".
+// Render.com instances have IPv6 routes that are unreachable (ENETUNREACH).
+// setDefaultResultOrder affects dns.lookup() sort order but some packages
+// call lookup with {all:true} and may still attempt IPv6. We patch lookup
+// to force family:4 for all outbound connections.
 dns.setDefaultResultOrder("ipv4first");
+const _origLookup = dns.lookup.bind(dns);
+(dns as any).lookup = (hostname: string, options: any, callback?: any) => {
+  if (typeof options === "function") {
+    callback = options;
+    options = { family: 4 };
+  } else if (typeof options === "number") {
+    options = { family: 4 };
+  } else {
+    options = { ...options, family: 4 };
+  }
+  return _origLookup(hostname, options, callback);
+};
 
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";

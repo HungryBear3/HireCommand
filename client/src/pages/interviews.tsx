@@ -20,7 +20,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -277,13 +276,17 @@ function LogInterviewDialog({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" className="gap-1.5" data-testid="button-log-interview">
-          <Plus size={14} />
-          Log Interview
-        </Button>
-      </DialogTrigger>
+    <>
+      <Button
+        size="sm"
+        className="gap-1.5"
+        data-testid="button-log-interview"
+        onClick={() => setOpen(true)}
+      >
+        <Plus size={14} />
+        Log Interview
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-2xl overflow-y-auto max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="font-display">Log Interview</DialogTitle>
@@ -561,7 +564,8 @@ function LogInterviewDialog({ onSuccess }: { onSuccess: () => void }) {
           </div>
         </form>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+    </>
   );
 }
 

@@ -13,18 +13,29 @@ const MemoryStore = connectMemoryStore(session);
 
 function buildSessionStore() {
   if (!process.env.DATABASE_URL) {
+    console.log("[session] No DATABASE_URL — using in-memory session store");
     return new MemoryStore({ checkPeriod: 86400000 });
   }
-  const pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-    max: 3,
-  });
-  return new PgSession({
-    pool,
-    createTableIfMissing: true,
-    tableName: "session",
-  });
+  try {
+    const pool = new pg.Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 3,
+      connectionTimeoutMillis: 5000,
+    });
+    pool.on("error", (err) => {
+      console.error("[session] PG pool error (sessions will degrade):", err.message);
+    });
+    console.log("[session] Using PostgreSQL session store");
+    return new PgSession({
+      pool,
+      createTableIfMissing: true,
+      tableName: "session",
+    });
+  } catch (err) {
+    console.error("[session] Failed to create PG session store, falling back to memory:", err);
+    return new MemoryStore({ checkPeriod: 86400000 });
+  }
 }
 
 export function setupAuth(app: Express) {

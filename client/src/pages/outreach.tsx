@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -82,40 +82,47 @@ function CampaignFormDialog({ trigger, initial, campaignId, onDone, dialogTitle 
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const openDialog = () => {
+    setForm({ ...EMPTY_FORM, ...initial });
+    setOpen(true);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={v => { setOpen(v); if (v) setForm({ ...EMPTY_FORM, ...initial }); }}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader><DialogTitle>{dialogTitle}</DialogTitle></DialogHeader>
-        <form onSubmit={e => { e.preventDefault(); mut.mutate(); }} className="space-y-4 mt-2">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Campaign Name *</Label>
-            <Input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Q2 CFO Outreach — PE Portfolio" className="h-9 text-sm" required />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+    <>
+      <span onClick={openDialog} style={{ display: "contents" }}>{trigger}</span>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>{dialogTitle}</DialogTitle></DialogHeader>
+          <form onSubmit={e => { e.preventDefault(); mut.mutate(); }} className="space-y-4 mt-2">
             <div className="space-y-1.5">
-              <Label className="text-xs">Channel</Label>
-              <select value={form.channel} onChange={e => set("channel", e.target.value)} className="w-full h-9 text-sm rounded-md border border-input bg-background px-3">
-                {CHANNELS.map(c => <option key={c} value={c} className="capitalize">{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
-              </select>
+              <Label className="text-xs">Campaign Name *</Label>
+              <Input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Q2 CFO Outreach — PE Portfolio" className="h-9 text-sm" required />
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Status</Label>
-              <select value={form.status} onChange={e => set("status", e.target.value)} className="w-full h-9 text-sm rounded-md border border-input bg-background px-3">
-                {STATUSES.map(s => <option key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-              </select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Channel</Label>
+                <select value={form.channel} onChange={e => set("channel", e.target.value)} className="w-full h-9 text-sm rounded-md border border-input bg-background px-3">
+                  {CHANNELS.map(c => <option key={c} value={c} className="capitalize">{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Status</Label>
+                <select value={form.status} onChange={e => set("status", e.target.value)} className="w-full h-9 text-sm rounded-md border border-input bg-background px-3">
+                  {STATUSES.map(s => <option key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+                </select>
+              </div>
             </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" size="sm" disabled={mut.isPending}>
-              {mut.isPending ? <Loader2 size={13} className="animate-spin mr-1" /> : null}
-              {mut.isPending ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={mut.isPending}>
+                {mut.isPending ? <Loader2 size={13} className="animate-spin mr-1" /> : null}
+                {mut.isPending ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

@@ -10,7 +10,7 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -84,9 +84,15 @@ function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const openDialog = () => {
+    setForm({ ...EMPTY, ...initial });
+    setOpen(true);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={v => { setOpen(v); if (v) setForm({ ...EMPTY, ...initial }); }}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+    <>
+      <span onClick={openDialog} style={{ display: "contents" }}>{trigger}</span>
+      <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{dialogTitle}</DialogTitle></DialogHeader>
         <form onSubmit={e => { e.preventDefault(); mut.mutate(); }} className="space-y-4 mt-2">
@@ -131,7 +137,8 @@ function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
           </div>
         </form>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+    </>
   );
 }
 

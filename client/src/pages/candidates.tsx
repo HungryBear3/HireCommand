@@ -25,7 +25,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Search,
@@ -173,13 +172,17 @@ function AddCandidateDialog() {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" className="gap-2" data-testid="button-new-candidate">
-          <Plus size={14} />
-          New Candidate
-        </Button>
-      </DialogTrigger>
+    <>
+      <Button
+        size="sm"
+        className="gap-2"
+        data-testid="button-new-candidate"
+        onClick={() => { setForm(EMPTY_FORM); setOpen(true); }}
+      >
+        <Plus size={14} />
+        New Candidate
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add New Candidate</DialogTitle>
@@ -366,7 +369,8 @@ function AddCandidateDialog() {
           </div>
         </form>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+    </>
   );
 }
 
