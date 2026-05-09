@@ -153,10 +153,18 @@ export default function Jobs() {
   const queryClient = useQueryClient();
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [showClosed, setShowClosed] = useState(false);
+  const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const activeJobs = jobs.filter(job => job.stage !== "closed");
   const closedJobs = jobs.filter(job => job.stage === "closed");
+  const selectedActiveJobs = activeJobs.filter(job => selectedJobIds.includes(job.id));
+
+  const toggleJobSelection = (jobId: number) => {
+    setSelectedJobIds(ids => ids.includes(jobId) ? ids.filter(id => id !== jobId) : [...ids, jobId]);
+  };
+
+  const clearSelection = () => setSelectedJobIds([]);
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/jobs/${id}`); },
@@ -181,6 +189,20 @@ export default function Jobs() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const bulkCloseMutation = useMutation({
+    mutationFn: async (ids: number[]) => {
+      await Promise.all(ids.map(id => apiRequest("PATCH", `/api/jobs/${id}`, { stage: "closed" })));
+    },
+    onSuccess: () => {
+      const count = selectedActiveJobs.length;
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      setSelectedJob(null);
+      clearSelection();
+      toast({ title: `${count} job${count === 1 ? "" : "s"} closed` });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -192,6 +214,27 @@ export default function Jobs() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {selectedActiveJobs.length > 0 && (
+            <>
+              <Button size="sm" variant="outline" onClick={clearSelection}>
+                Clear ({selectedActiveJobs.length})
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => {
+                  if (confirm(`Close ${selectedActiveJobs.length} selected job${selectedActiveJobs.length === 1 ? "" : "s"} and remove them from the active pipeline?`)) {
+                    bulkCloseMutation.mutate(selectedActiveJobs.map(job => job.id));
+                  }
+                }}
+                disabled={bulkCloseMutation.isPending}
+              >
+                {bulkCloseMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Archive size={14} />}
+                Close Selected
+              </Button>
+            </>
+          )}
           {closedJobs.length > 0 && (
             <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowClosed(v => !v)}>
               <Archive size={14} /> {showClosed ? "Hide Closed" : "Closed Jobs"}
@@ -220,11 +263,21 @@ export default function Jobs() {
                 </div>
                 <div className="space-y-2">
                   {stageJobs.map(job => (
-                    <Card key={job.id} className="border border-card-border hover:border-primary/30 transition-colors cursor-pointer" onClick={() => setSelectedJob(job)}>
+                    <Card key={job.id} className={`border transition-colors cursor-pointer ${selectedJobIds.includes(job.id) ? "border-primary bg-primary/5" : "border-card-border hover:border-primary/30"}`} onClick={() => setSelectedJob(job)}>
                       <CardContent className="p-3 space-y-2">
-                        <div>
-                          <p className="text-sm font-semibold leading-tight">{job.title}</p>
-                          <p className="text-xs text-muted-foreground">{job.company}</p>
+                        <div className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${job.title}`}
+                            checked={selectedJobIds.includes(job.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => toggleJobSelection(job.id)}
+                            className="mt-0.5 h-4 w-4 rounded border-input accent-primary"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold leading-tight">{job.title}</p>
+                            <p className="text-xs text-muted-foreground">{job.company}</p>
+                          </div>
                         </div>
                         {job.location && <div className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin size={11} />{job.location}</div>}
                         <div className="flex justify-between text-xs text-muted-foreground">
