@@ -13,59 +13,15 @@ import {
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq, desc } from "drizzle-orm";
-import { spawnSync } from "child_process";
+const connectionURL = process.env.DATABASE_URL || "postgresql://localhost/hirecommand";
 
-if (!process.env.DATABASE_URL) {
-  console.error("[storage] WARNING: DATABASE_URL not set — DB calls will fail");
-}
-
-// Resolve Supabase hostname to IPv4 synchronously before any connection is made.
-// Supabase pooler rejects IPv6 connections with "XX000 Tenant or user not found".
-// This runs at module load time so the postgres client always connects via IPv4.
-function resolveIPv4(hostname: string): string {
-  try {
-    const result = spawnSync("dig", ["+short", "+time=3", "+tries=2", "A", hostname], {
-      timeout: 6000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (!result.error && result.stdout) {
-      const ip = result.stdout.trim().split("\n")
-        .find((l) => /^\d{1,3}(\.\d{1,3}){3}$/.test(l.trim()));
-      if (ip) return ip.trim();
-    }
-    // Fallback: getent (also available on Linux)
-    const ge = spawnSync("getent", ["ahostsv4", hostname], {
-      timeout: 6000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (!ge.error && ge.stdout) {
-      const match = ge.stdout.match(/^(\d{1,3}(\.\d{1,3}){3})/m);
-      if (match) return match[1];
-    }
-  } catch (_) { /* non-fatal */ }
-  return hostname;
-}
-
-function buildConnectionURL(rawUrl: string): string {
-  try {
-    const url = new URL(rawUrl);
-    // Warn about old-format Supabase pooler URLs (no project ref in username)
-    if (url.hostname.includes("pooler.supabase.com") && !url.username.includes(".")) {
-      console.warn(
-        "[db] WARNING: DATABASE_URL looks like an old Supabase pooler URL. " +
-        "Update it to the new format (username=postgres.PROJECT_REF) or use the direct connection URL.",
-      );
-    }
-    const ipv4 = resolveIPv4(url.hostname);
-    if (ipv4 !== url.hostname) {
-      console.log(`[db] ${url.hostname} → ${ipv4} (IPv4)`);
-      url.hostname = ipv4;
-    }
-    return url.toString();
-  } catch (_) {
-    return rawUrl;
-  }
-}
-
+const client = postgres(connectionURL, {
+  max: 10,
+  connect_timeout: 15,
+  idle_timeout: 30,
+  ssl: { rejectUnauthorized: false },
+  onnotice: () => {},
+});
 const rawDatabaseURL = process.env.DATABASE_URL || "postgresql://localhost/hirecommand";
 const connectionURL = buildConnectionURL(rawDatabaseURL);
 
