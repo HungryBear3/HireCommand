@@ -10,10 +10,16 @@ export function serveStatic(app: Express) {
     );
   }
 
+  // Serve static assets (JS, CSS, images)
   app.use(express.static(distPath));
 
-  // fall through to index.html if the file doesn't exist
-  app.use("/{*path}", (_req, res) => {
+  // SPA fallback — explicitly guard /api/ routes so they return 404 JSON
+  // instead of index.html. Express 5's wildcard app.use catches API routes
+  // before specific route handlers fire, breaking all API endpoints.
+  app.use((req, res) => {
+    if (req.path.startsWith("/api/")) {
+      return res.status(404).json({ error: `Cannot ${req.method} ${req.path}` });
+    }
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
