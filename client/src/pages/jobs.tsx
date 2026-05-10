@@ -419,13 +419,13 @@ export default function Jobs() {
   const [showClosed, setShowClosed] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
+  const [bulkStage, setBulkStage] = useState("");
   const [placementInvoiceJob, setPlacementInvoiceJob] = useState<Job | null>(null);
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const activeJobs = jobs.filter(job => job.stage !== "closed");
   const closedJobs = jobs.filter(job => job.stage === "closed");
   const selectedActiveJobs = activeJobs.filter(job => selectedJobIds.includes(job.id));
-  const allActiveSelected = activeJobs.length > 0 && selectedActiveJobs.length === activeJobs.length;
 
   const toggleJobSelection = (jobId: number) => {
     setSelectedJobIds(ids => ids.includes(jobId) ? ids.filter(id => id !== jobId) : [...ids, jobId]);
@@ -436,9 +436,14 @@ export default function Jobs() {
     setSelectionMode(false);
   };
 
-  const toggleAllActiveJobs = () => {
+  const toggleStageSelection = (stageJobs: Job[]) => {
     setSelectionMode(true);
-    setSelectedJobIds(allActiveSelected ? [] : activeJobs.map(job => job.id));
+    const stageIds = stageJobs.map(job => job.id);
+    const allStageSelected = stageIds.length > 0 && stageIds.every(id => selectedJobIds.includes(id));
+    setSelectedJobIds(ids => allStageSelected
+      ? ids.filter(id => !stageIds.includes(id))
+      : Array.from(new Set([...ids, ...stageIds]))
+    );
   };
 
   const handleJobCardClick = (job: Job) => {
@@ -480,6 +485,22 @@ export default function Jobs() {
     stageMutation.mutate({ id: job.id, stage });
   };
 
+  const bulkStageMutation = useMutation({
+    mutationFn: async ({ ids, stage }: { ids: number[]; stage: string }) => {
+      await Promise.all(ids.map(id => apiRequest("PATCH", `/api/jobs/${id}`, { stage })));
+    },
+    onSuccess: (_data, vars) => {
+      const count = vars.ids.length;
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      setSelectedJob(null);
+      setBulkStage("");
+      clearSelection();
+      const label = STAGES.find(s => s.key === vars.stage)?.label ?? vars.stage;
+      toast({ title: `${count} job${count === 1 ? "" : "s"} moved to ${label}` });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const bulkCloseMutation = useMutation({
     mutationFn: async (ids: number[]) => {
       await Promise.all(ids.map(id => apiRequest("PATCH", `/api/jobs/${id}`, { stage: "closed" })));
@@ -520,11 +541,24 @@ export default function Jobs() {
           )}
           {(selectionMode || selectedActiveJobs.length > 0) && (
             <>
-              <Button size="sm" variant="outline" onClick={toggleAllActiveJobs}>
-                {allActiveSelected ? "Unselect All" : "Select All Active"}
-              </Button>
+              <span className="text-xs text-muted-foreground hidden md:inline">Use each stage header to select only that stage.</span>
               {selectedActiveJobs.length > 0 && (
                 <>
+                  <select
+                    value={bulkStage}
+                    onChange={(e) => {
+                      const stage = e.target.value;
+                      setBulkStage(stage);
+                      if (stage && confirm(`Move ${selectedActiveJobs.length} selected job${selectedActiveJobs.length === 1 ? "" : "s"} to ${STAGES.find(s => s.key === stage)?.label ?? stage}?`)) {
+                        bulkStageMutation.mutate({ ids: selectedActiveJobs.map(job => job.id), stage });
+                      }
+                    }}
+                    disabled={bulkStageMutation.isPending}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    <option value="">Move selected…</option>
+                    {STAGES.map(stage => <option key={stage.key} value={stage.key}>{stage.label}</option>)}
+                  </select>
                   <Button size="sm" variant="outline" onClick={clearSelection}>
                     Clear ({selectedActiveJobs.length})
                   </Button>
@@ -568,8 +602,25 @@ export default function Jobs() {
             return (
               <div key={stage.key} className="flex-shrink-0 w-[260px]">
                 <div className="flex items-center gap-2 mb-3 px-1">
+                  {(selectionMode || selectedActiveJobs.length > 0) && stageJobs.length > 0 && (
+                    <input
+                      type="checkbox"
+                      aria-label={`Select all ${stage.label} jobs`}
+                      checked={stageJobs.every(job => selectedJobIds.includes(job.id))}
+                      onChange={() => toggleStageSelection(stageJobs)}
+                      className="h-4 w-4 rounded border-input accent-primary"
+                    />
+                  )}
                   <div className={`w-2 h-2 rounded-full ${stage.color}`} />
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{stage.label}</span>
+                  <button
+                    type="button"
+                    onClick={() => stageJobs.length > 0 && toggleStageSelection(stageJobs)}
+                    className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                    disabled={stageJobs.length === 0}
+                    title={stageJobs.length > 0 ? `Select/unselect ${stage.label} jobs only` : undefined}
+                  >
+                    {stage.label}
+                  </button>
                   <Badge variant="secondary" className="text-[10px] h-4 px-1.5 ml-auto">{stageJobs.length}</Badge>
                 </div>
                 <div className="space-y-2">

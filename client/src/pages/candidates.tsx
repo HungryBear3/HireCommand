@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Candidate, Job } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -885,6 +885,7 @@ function CandidateDetail({
   const { toast } = useToast();
   const [candidate, setCandidate] = useState<Candidate>(initialCandidate);
   const [selectedJobId, setSelectedJobId] = useState("");
+  const pipelineSectionRef = useRef<HTMLDivElement | null>(null);
 
   const { data: jobs = [] } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const activeJobs = jobs.filter((job) => job.stage !== "closed");
@@ -927,7 +928,7 @@ function CandidateDetail({
   const syncMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/linkedin-sync/candidate/${candidate.id}`);
-      return res.json() as Promise<{ result: { status: string; changes: ProfileChange[] }; candidate: Candidate }>;
+      return res.json() as Promise<{ result: { status: string; changes: ProfileChange[]; error?: string }; candidate: Candidate }>;
     },
     onSuccess: ({ result, candidate: updated }) => {
       setCandidate(updated);
@@ -968,6 +969,16 @@ function CandidateDetail({
       toast({ title: "Could not add to job", description: err.message, variant: "destructive" });
     },
   });
+
+  const openPipelinePicker = () => {
+    pipelineSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const firstUnassigned = activeJobs.find((job) => !assignedJobs.some((assigned) => assigned.id === job.id));
+    if (firstUnassigned) setSelectedJobId(String(firstUnassigned.id));
+    toast({
+      title: "Pipeline assignment ready",
+      description: firstUnassigned ? `Selected ${firstUnassigned.title}. Click Add to attach this candidate.` : "Choose an active job below to attach this candidate.",
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -1111,13 +1122,19 @@ function CandidateDetail({
         <Button size="sm" variant="outline" className="gap-1.5 flex-1" data-testid="button-call-candidate">
           <Phone size={13} /> Call
         </Button>
-        <Button size="sm" variant="outline" className="gap-1.5 flex-1" data-testid="button-add-pipeline">
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 flex-1"
+          onClick={openPipelinePicker}
+          data-testid="button-add-pipeline"
+        >
           <Sparkles size={13} /> Pipeline
         </Button>
       </div>
 
       {/* Active Job Assignment */}
-      <Card className="border border-card-border">
+      <Card ref={pipelineSectionRef} className="border border-card-border">
         <CardContent className="p-4 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold flex items-center gap-1.5">
