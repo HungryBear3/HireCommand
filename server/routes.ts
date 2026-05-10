@@ -155,7 +155,7 @@ export async function registerRoutes(
         if (!client) continue;
         const assigned = await storage.getCandidatesForJob(job.id);
         const stageCounts = { Sourcing: 0, Screening: 0, Interview: 0, Offer: 0, Placed: 0 } as Record<string, number>;
-        for (const candidate of assigned) stageCounts[stageLabel(candidate.status)] += 1;
+        for (const candidate of assigned) stageCounts[stageLabel((candidate as any).assignmentStatus || candidate.status)] += 1;
         if (assigned.length === 0) stageCounts[stageLabel(job.stage)] = Math.max(0, job.candidateCount || 0);
 
         client.searches.push({
@@ -170,7 +170,8 @@ export async function registerRoutes(
         });
 
         for (const candidate of assigned) {
-          const stage = stageLabel(candidate.status);
+          const assignmentStatus = (candidate as any).assignmentStatus || candidate.status;
+          const stage = stageLabel(assignmentStatus);
           client.candidates.push({
             id: String(candidate.id),
             name: candidate.name,
@@ -183,7 +184,7 @@ export async function registerRoutes(
             stage,
             lastAction: candidate.notes?.slice(0, 80) || `Assigned to ${job.title}`,
             lastActionDate: candidate.lastContact || "Synced from Loxo",
-            health: candidate.status?.toLowerCase().includes("stalled") ? "Stalled" : "Healthy",
+            health: assignmentStatus?.toLowerCase().includes("stalled") ? "Stalled" : "Healthy",
           });
           client.activity.push({
             id: `job-${job.id}-candidate-${candidate.id}`,
@@ -387,6 +388,30 @@ export async function registerRoutes(
     const data = await storage.updateCandidateJobStatus(candidateId, jobId, status);
     if (!data) return res.status(404).json({ error: "Candidate is not assigned to this job" });
     await storage.updateCandidate(candidateId, { status } as any);
+    if (status === "interview") {
+      const interviews = await storage.getInterviews();
+      const exists = interviews.some((i) => i.candidateId === candidateId && i.jobTitle === job.title && i.jobCompany === job.company);
+      if (!exists) {
+        await storage.createInterview({
+          candidateId,
+          candidateName: candidate.name,
+          candidateTitle: candidate.title || "Candidate",
+          jobTitle: job.title,
+          jobCompany: job.company,
+          interviewType: "first_round",
+          interviewDate: candidate.lastContact || new Date().toISOString().slice(0, 10),
+          interviewer: "THA",
+          duration: 45,
+          overallRating: 0,
+          notes: `Auto-created from ${job.title} job pipeline stage change.`,
+          strengths: "[]",
+          concerns: "[]",
+          salaryDiscussed: "",
+          nextSteps: "Schedule and log interview details",
+          recommendation: "hold",
+        });
+      }
+    }
     res.json(data);
   });
 
@@ -490,7 +515,38 @@ export async function registerRoutes(
   // ======================== INTERVIEWS ========================
   app.get("/api/interviews", async (_req, res) => {
     const data = await storage.getInterviews();
-    res.json(data);
+    const existingKeys = new Set(data.map((i) => `${i.candidateId}:${i.jobTitle.toLowerCase()}:${i.jobCompany.toLowerCase()}`));
+    const synthetic: any[] = [];
+    const jobs = await storage.getJobs();
+    for (const job of jobs.filter((j) => j.stage !== "closed")) {
+      const assigned = await storage.getCandidatesForJob(job.id);
+      for (const candidate of assigned) {
+        const assignmentStatus = ((candidate as any).assignmentStatus || candidate.status || "").toLowerCase();
+        if (assignmentStatus !== "interview") continue;
+        const key = `${candidate.id}:${job.title.toLowerCase()}:${job.company.toLowerCase()}`;
+        if (existingKeys.has(key)) continue;
+        synthetic.push({
+          id: -Number(`${job.id}${candidate.id}`.slice(0, 8)),
+          candidateId: candidate.id,
+          candidateName: candidate.name,
+          candidateTitle: candidate.title || "Candidate",
+          jobTitle: job.title,
+          jobCompany: job.company,
+          interviewType: "first_round",
+          interviewDate: candidate.lastContact || new Date().toISOString().slice(0, 10),
+          interviewer: "THA",
+          duration: 45,
+          overallRating: 0,
+          notes: `Auto-added from ${job.title} job pipeline. Candidate is in Interview stage.`,
+          strengths: "[]",
+          concerns: "[]",
+          salaryDiscussed: "",
+          nextSteps: "Schedule and log interview details",
+          recommendation: "hold",
+        });
+      }
+    }
+    res.json([...synthetic, ...data]);
   });
 
   app.get("/api/interviews/:id", async (req, res) => {
