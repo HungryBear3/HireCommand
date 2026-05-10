@@ -102,6 +102,114 @@ export async function registerRoutes(
   // handled before this middleware fires for those paths.
   app.use("/api", requireAuth);
 
+
+  // ======================== CLIENT PORTAL ========================
+  // Real client portal data built from synced Loxo jobs, job-candidate assignments, and client contacts.
+  app.get("/api/client-portal", async (_req, res) => {
+    try {
+      const [allJobs, allContacts] = await Promise.all([
+        storage.getJobs(),
+        storage.getLoxoClients(),
+      ]);
+
+      const normalize = (name: string) => name.trim().replace(/\s+/g, " ");
+      const slugify = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "client";
+      const stageLabel = (stage: string) => {
+        const s = (stage || "sourcing").toLowerCase();
+        if (s.includes("interview")) return "Interview";
+        if (s.includes("screen")) return "Screening";
+        if (s.includes("offer")) return "Offer";
+        if (s.includes("place")) return "Placed";
+        return "Sourcing";
+      };
+      const byCompany = new Map<string, any>();
+      const ensureClient = (companyName: string) => {
+        const name = normalize(companyName || "");
+        if (!name || ["unknown", "unknown company"].includes(name.toLowerCase())) return null;
+        const key = name.toLowerCase();
+        if (!byCompany.has(key)) {
+          byCompany.set(key, {
+            id: slugify(name),
+            name,
+            sponsor: "Live Loxo data",
+            slug: slugify(name),
+            lastActivity: "Synced from Loxo",
+            searches: [],
+            candidates: [],
+            contacts: [],
+            activity: [],
+            notes: [],
+          });
+        }
+        return byCompany.get(key);
+      };
+
+      for (const contact of allContacts) {
+        const client = ensureClient(contact.company || "");
+        if (!client) continue;
+        client.contacts.push(contact);
+      }
+
+      for (const job of allJobs.filter((job) => job.stage !== "closed")) {
+        const client = ensureClient(job.company);
+        if (!client) continue;
+        const assigned = await storage.getCandidatesForJob(job.id);
+        const stageCounts = { Sourcing: 0, Screening: 0, Interview: 0, Offer: 0, Placed: 0 } as Record<string, number>;
+        for (const candidate of assigned) stageCounts[stageLabel(candidate.status)] += 1;
+        if (assigned.length === 0) stageCounts[stageLabel(job.stage)] = Math.max(0, job.candidateCount || 0);
+
+        client.searches.push({
+          id: String(job.id),
+          title: job.title,
+          openDate: `${job.daysOpen || 0} days open`,
+          daysOpen: job.daysOpen || 0,
+          owner: "THA",
+          health: job.daysOpen > 60 ? "At Risk" : "Healthy",
+          atRiskReason: job.daysOpen > 60 ? `Open ${job.daysOpen} days` : undefined,
+          stageCounts,
+        });
+
+        for (const candidate of assigned) {
+          const stage = stageLabel(candidate.status);
+          client.candidates.push({
+            id: String(candidate.id),
+            name: candidate.name,
+            title: candidate.title,
+            company: candidate.company,
+            email: candidate.email,
+            phone: candidate.phone,
+            linkedin: candidate.linkedin,
+            searchId: String(job.id),
+            stage,
+            lastAction: candidate.notes?.slice(0, 80) || `Assigned to ${job.title}`,
+            lastActionDate: candidate.lastContact || "Synced from Loxo",
+            health: candidate.status?.toLowerCase().includes("stalled") ? "Stalled" : "Healthy",
+          });
+          client.activity.push({
+            id: `job-${job.id}-candidate-${candidate.id}`,
+            date: candidate.lastContact || "Synced from Loxo",
+            type: stage === "Interview" ? "interview" : stage === "Screening" ? "call" : "note",
+            description: `${candidate.name} is ${stage.toLowerCase()} for ${job.title}`,
+            person: "THA",
+          });
+        }
+      }
+
+      for (const client of Array.from(byCompany.values())) {
+        client.lastActivity = client.activity[0]?.date || (client.searches[0] ? "Active search" : "Synced from Loxo");
+        if (client.contacts[0]) {
+          client.sponsor = `Contact: ${client.contacts[0].name}${client.contacts[0].title ? `, ${client.contacts[0].title}` : ""}`;
+        }
+      }
+
+      res.json(Array.from(byCompany.values())
+        .filter((client: any) => client.searches.length > 0)
+        .sort((a: any, b: any) => b.searches.length - a.searches.length || a.name.localeCompare(b.name)));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ======================== CANDIDATES ========================
   app.get("/api/candidates", async (_req, res) => {
     const data = await storage.getCandidates();

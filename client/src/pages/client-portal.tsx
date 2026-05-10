@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -101,6 +101,7 @@ interface Client {
   lastActivity: string;
   searches: Search[];
   candidates: Candidate[];
+  contacts?: ApiClientContact[];
   activity: ActivityItem[];
   notes: ClientNote[];
 }
@@ -1320,15 +1321,7 @@ export default function ClientPortal() {
   const [activeTab, setActiveTab] = useState("overview");
   const [newNote, setNewNote] = useState("");
 
-  const { data: apiJobs = [] } = useQuery<ApiJob[]>({ queryKey: ["/api/jobs"] });
-  const { data: apiCandidates = [] } = useQuery<ApiCandidate[]>({ queryKey: ["/api/candidates"] });
-  const { data: apiContacts = [] } = useQuery<ApiClientContact[]>({ queryKey: ["/api/clients"] });
-
-  const realClients = useMemo(
-    () => buildClientsFromRealData(apiJobs, apiCandidates, apiContacts),
-    [apiJobs, apiCandidates, apiContacts]
-  );
-  const clients = realClients.length > 0 ? realClients : CLIENTS;
+  const { data: clients = [] } = useQuery<Client[]>({ queryKey: ["/api/client-portal"] });
   const activeClientId = selectedClientId || clients[0]?.id || "";
 
   const filteredClients = clients.filter(
@@ -1337,12 +1330,20 @@ export default function ClientPortal() {
       c.sponsor.toLowerCase().includes(clientSearch.toLowerCase())
   );
 
-  const client = clients.find((c) => c.id === activeClientId) ?? clients[0] ?? CLIENTS[0];
-  const companyContacts = apiContacts.filter((contact) => {
-    const company = (contact.company || contact.name || "").toLowerCase();
-    if (!company) return false;
-    return company === client.name.toLowerCase() || company.includes(client.name.toLowerCase()) || client.name.toLowerCase().includes(company);
-  });
+  const emptyClient: Client = {
+    id: "empty",
+    name: "No client data yet",
+    sponsor: "Run Loxo sync to populate real client portal data",
+    slug: "empty",
+    lastActivity: "—",
+    searches: [],
+    candidates: [],
+    contacts: [],
+    activity: [],
+    notes: [],
+  };
+  const client = clients.find((c) => c.id === activeClientId) ?? clients[0] ?? emptyClient;
+  const companyContacts = client.contacts ?? [];
   const selectedContact = companyContacts.find((contact) => String(contact.id) === selectedContactId) ?? companyContacts[0];
   const overallHealth = getOverallHealth(client.searches);
 
@@ -1502,7 +1503,7 @@ export default function ClientPortal() {
               <p className="text-xs text-muted-foreground">
                 {client.sponsor} · {client.searches.length} active{" "}
                 {client.searches.length === 1 ? "search" : "searches"}
-                {realClients.length > 0 ? " · Live Loxo data" : " · Demo fallback"}
+                {clients.length > 0 ? " · Live Loxo data" : " · No synced client data"}
               </p>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +30,9 @@ interface SchedulingSession {
   status: string;
   confirmedTime: string | null;
   notes: string;
+  zoomJoinUrl?: string;
+  zoomMeetingId?: string;
+  zoomPasscode?: string;
   createdAt: string;
 }
 
@@ -45,6 +48,12 @@ interface JobOption {
   id: number;
   title: string;
   company: string;
+}
+
+interface ZoomMeeting {
+  joinUrl: string;
+  meetingId: string;
+  passcode: string;
 }
 
 const INTERVIEW_TYPES = [
@@ -117,6 +126,7 @@ function SessionCard({ session, onUpdate, onDelete }: {
   const [contactDraft, setContactDraft] = useState(session.contactDraft);
   const statusCfg = STATUS_CONFIG[session.status] ?? STATUS_CONFIG.drafting;
   const times: string[] = (() => { try { return JSON.parse(session.proposedTimes); } catch { return []; } })();
+  const zoomMeeting = (() => { try { return JSON.parse(session.notes || "{}").zoomMeeting as ZoomMeeting | undefined; } catch { return undefined; } })();
   const interviewLabel = INTERVIEW_TYPES.find(t => t.value === session.interviewType)?.label ?? session.interviewType;
 
   return (
@@ -155,6 +165,18 @@ function SessionCard({ session, onUpdate, onDelete }: {
                     {new Date(t).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Zoom meeting */}
+          {zoomMeeting?.joinUrl && (
+            <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Zoom Meeting</p>
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                <span>Meeting ID: <strong className="text-foreground">{zoomMeeting.meetingId}</strong></span>
+                <span>Passcode: <strong className="text-foreground">{zoomMeeting.passcode}</strong></span>
+                <span className="truncate">Join URL: {zoomMeeting.joinUrl}</span>
               </div>
             </div>
           )}
@@ -220,15 +242,27 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
 
   const [candidateId, setCandidateId] = useState("");
   const [jobId, setJobId] = useState("");
+  const [jobQuery, setJobQuery] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [interviewType, setInterviewType] = useState("first_round");
   const [timeInputs, setTimeInputs] = useState<string[]>(["", "", ""]);
   const [drafting, setDrafting] = useState(false);
+  const [creatingZoom, setCreatingZoom] = useState(false);
+  const [autoCreateZoom, setAutoCreateZoom] = useState(true);
+  const [zoomMeeting, setZoomMeeting] = useState<ZoomMeeting | null>(null);
   const [drafts, setDrafts] = useState<{ candidateDraft: string; contactDraft: string } | null>(null);
 
   const selectedCandidate = candidateOptions.find(c => String(c.id) === candidateId);
-  const selectedJob = jobOptions.find(j => String(j.id) === jobId);
+  const selectedExistingJob = jobOptions.find(j => String(j.id) === jobId);
+  const selectedJob = selectedExistingJob ?? (jobQuery.trim()
+    ? { id: 0, title: jobQuery.trim(), company: jobQuery.includes("@") ? jobQuery.split("@").slice(1).join("@").trim() : "" }
+    : undefined);
+  const filteredJobOptions = useMemo(() => {
+    const q = jobQuery.toLowerCase().trim();
+    if (!q) return jobOptions.slice(0, 20);
+    return jobOptions.filter(j => `${j.title} ${j.company}`.toLowerCase().includes(q)).slice(0, 20);
+  }, [jobOptions, jobQuery]);
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -249,6 +283,41 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  async function ensureZoomMeeting(): Promise<ZoomMeeting | null> {
+    if (!autoCreateZoom) return zoomMeeting;
+    if (zoomMeeting) return zoomMeeting;
+    const proposedTimes = timeInputs.filter(Boolean);
+    if (proposedTimes.length === 0) {
+      toast({ title: "Add at least one proposed time before creating Zoom", variant: "destructive" });
+      return null;
+    }
+    if (!selectedCandidate || !selectedJob || !contactName) return null;
+    setCreatingZoom(true);
+    try {
+      const r = await fetch("/api/scheduling/zoom-meeting", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: `${selectedJob.title} interview: ${selectedCandidate.name}`,
+          startTime: proposedTimes[0],
+          durationMinutes: 45,
+          agenda: `${selectedCandidate.name} interview for ${selectedJob.title}${selectedJob.company ? ` at ${selectedJob.company}` : ""}`,
+        }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const meeting = await r.json();
+      setZoomMeeting(meeting);
+      toast({ title: "Zoom meeting created", description: `Meeting ID ${meeting.meetingId}` });
+      return meeting;
+    } catch (e: any) {
+      toast({ title: "Zoom setup failed", description: e.message, variant: "destructive" });
+      return null;
+    } finally {
+      setCreatingZoom(false);
+    }
+  }
+
   async function handleDraft() {
     if (!selectedCandidate || !selectedJob || !contactName) {
       toast({ title: "Fill in candidate, job, and contact name first", variant: "destructive" });
@@ -257,6 +326,7 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
     setDrafting(true);
     try {
       const proposedTimes = timeInputs.filter(Boolean);
+      const meeting = await ensureZoomMeeting();
       const r = await fetch("/api/scheduling/draft", {
         method: "POST",
         credentials: "include",
@@ -273,6 +343,7 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
           interviewType,
           recruiterName: currentUser?.recruiterName ?? "The Hiring Advisors",
           proposedTimes,
+          zoomMeeting: meeting,
         }),
       });
       if (!r.ok) throw new Error(await r.text());
@@ -284,27 +355,32 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!selectedCandidate || !selectedJob || !contactName) {
       toast({ title: "Candidate, job, and contact name required", variant: "destructive" });
       return;
     }
     const proposedTimes = timeInputs.filter(Boolean);
+    const meeting = await ensureZoomMeeting();
+    if (autoCreateZoom && !meeting) return;
     createMutation.mutate({
       candidateId: selectedCandidate.id,
       candidateName: selectedCandidate.name,
       candidateEmail: selectedCandidate.email,
-      jobId: selectedJob.id,
+      jobId: selectedJob.id || undefined,
       jobTitle: selectedJob.title,
-      company: selectedJob.company,
+      company: selectedJob.company || "",
       contactName,
       contactEmail,
       interviewType,
       proposedTimes: JSON.stringify(proposedTimes),
       candidateDraft: drafts?.candidateDraft ?? "",
       contactDraft: drafts?.contactDraft ?? "",
-      status: drafts ? "drafting" : "drafting",
-      notes: "",
+      status: "drafting",
+      zoomJoinUrl: meeting?.joinUrl ?? "",
+      zoomMeetingId: meeting?.meetingId ?? "",
+      zoomPasscode: meeting?.passcode ?? "",
+      notes: meeting ? JSON.stringify({ zoomMeeting: meeting }) : "",
     });
   }
 
@@ -334,16 +410,23 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Job</Label>
-            <select
-              value={jobId}
-              onChange={e => setJobId(e.target.value)}
-              className="w-full h-9 text-sm rounded-md border border-input bg-background px-3"
-            >
-              <option value="">Select job…</option>
-              {jobOptions.map(j => (
-                <option key={j.id} value={j.id}>{j.title} @ {j.company}</option>
+            <Input
+              value={jobQuery}
+              onChange={e => {
+                const value = e.target.value;
+                setJobQuery(value);
+                const match = jobOptions.find(j => `${j.title} @ ${j.company}` === value);
+                setJobId(match ? String(match.id) : "");
+              }}
+              list="scheduling-job-options"
+              placeholder="Type to search jobs, or enter a custom role…"
+              className="h-9 text-sm"
+            />
+            <datalist id="scheduling-job-options">
+              {filteredJobOptions.map(j => (
+                <option key={j.id} value={`${j.title} @ ${j.company}`} />
               ))}
-            </select>
+            </datalist>
           </div>
         </div>
 
@@ -389,6 +472,40 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
+        {/* Zoom setup */}
+        <div className="rounded-lg border border-border bg-background p-3 space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Zoom Meeting</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Creates a Zoom link with join-before-host enabled, meeting ID, and passcode so the admin does not need to attend.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={autoCreateZoom} onChange={e => setAutoCreateZoom(e.target.checked)} />
+              Auto-create
+            </label>
+          </div>
+          {zoomMeeting ? (
+            <div className="grid gap-1 text-xs text-muted-foreground">
+              <span>Meeting ID: <strong className="text-foreground">{zoomMeeting.meetingId}</strong></span>
+              <span>Passcode: <strong className="text-foreground">{zoomMeeting.passcode}</strong></span>
+              <span className="truncate">Join URL: {zoomMeeting.joinUrl}</span>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs gap-1.5"
+              onClick={ensureZoomMeeting}
+              disabled={creatingZoom || !candidateId || !selectedJob || !contactName || timeInputs.filter(Boolean).length === 0}
+            >
+              {creatingZoom ? <Loader2 size={12} className="animate-spin" /> : <CalendarDays size={12} />}
+              Set up Zoom meeting
+            </Button>
+          )}
+        </div>
+
         {/* AI drafts */}
         {drafts && (
           <div className="grid gap-4 sm:grid-cols-2">
@@ -411,7 +528,7 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
             variant="outline"
             className="gap-1.5 text-xs"
             onClick={handleDraft}
-            disabled={drafting || !candidateId || !jobId || !contactName}
+            disabled={drafting || !candidateId || !selectedJob || !contactName}
           >
             {drafting ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
             {drafts ? "Re-draft with AI" : "Draft Emails with AI"}
@@ -420,7 +537,7 @@ function NewSessionForm({ onClose }: { onClose: () => void }) {
             size="sm"
             className="gap-1.5 text-xs"
             onClick={handleSave}
-            disabled={createMutation.isPending || !candidateId || !jobId || !contactName}
+            disabled={createMutation.isPending || !candidateId || !selectedJob || !contactName}
           >
             {createMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
             Save Session
