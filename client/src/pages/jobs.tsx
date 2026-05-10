@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2, Archive, RotateCcw } from "lucide-react";
+import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2, Archive, RotateCcw, CheckSquare } from "lucide-react";
 
 const ACTIVE_STAGES = [
   { key: "intake",     label: "Intake",     color: "bg-slate-400" },
@@ -153,18 +153,36 @@ export default function Jobs() {
   const queryClient = useQueryClient();
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [showClosed, setShowClosed] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
   const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const activeJobs = jobs.filter(job => job.stage !== "closed");
   const closedJobs = jobs.filter(job => job.stage === "closed");
   const selectedActiveJobs = activeJobs.filter(job => selectedJobIds.includes(job.id));
+  const allActiveSelected = activeJobs.length > 0 && selectedActiveJobs.length === activeJobs.length;
 
   const toggleJobSelection = (jobId: number) => {
     setSelectedJobIds(ids => ids.includes(jobId) ? ids.filter(id => id !== jobId) : [...ids, jobId]);
   };
 
-  const clearSelection = () => setSelectedJobIds([]);
+  const clearSelection = () => {
+    setSelectedJobIds([]);
+    setSelectionMode(false);
+  };
+
+  const toggleAllActiveJobs = () => {
+    setSelectionMode(true);
+    setSelectedJobIds(allActiveSelected ? [] : activeJobs.map(job => job.id));
+  };
+
+  const handleJobCardClick = (job: Job) => {
+    if (selectionMode || selectedJobIds.length > 0) {
+      toggleJobSelection(job.id);
+      return;
+    }
+    setSelectedJob(job);
+  };
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => { await apiRequest("DELETE", `/api/jobs/${id}`); },
@@ -214,25 +232,45 @@ export default function Jobs() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {selectedActiveJobs.length > 0 && (
+          {activeJobs.length > 0 && (
+            <Button
+              size="sm"
+              variant={selectionMode || selectedActiveJobs.length > 0 ? "default" : "outline"}
+              className="gap-1.5"
+              onClick={() => {
+                setSelectionMode(v => !v);
+                if (selectionMode) setSelectedJobIds([]);
+              }}
+            >
+              <CheckSquare size={14} /> {selectionMode || selectedActiveJobs.length > 0 ? "Selecting" : "Select Jobs"}
+            </Button>
+          )}
+          {(selectionMode || selectedActiveJobs.length > 0) && (
             <>
-              <Button size="sm" variant="outline" onClick={clearSelection}>
-                Clear ({selectedActiveJobs.length})
+              <Button size="sm" variant="outline" onClick={toggleAllActiveJobs}>
+                {allActiveSelected ? "Unselect All" : "Select All Active"}
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() => {
-                  if (confirm(`Close ${selectedActiveJobs.length} selected job${selectedActiveJobs.length === 1 ? "" : "s"} and remove them from the active pipeline?`)) {
-                    bulkCloseMutation.mutate(selectedActiveJobs.map(job => job.id));
-                  }
-                }}
-                disabled={bulkCloseMutation.isPending}
-              >
-                {bulkCloseMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Archive size={14} />}
-                Close Selected
-              </Button>
+              {selectedActiveJobs.length > 0 && (
+                <>
+                  <Button size="sm" variant="outline" onClick={clearSelection}>
+                    Clear ({selectedActiveJobs.length})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => {
+                      if (confirm(`Close ${selectedActiveJobs.length} selected job${selectedActiveJobs.length === 1 ? "" : "s"} and remove them from the active pipeline?`)) {
+                        bulkCloseMutation.mutate(selectedActiveJobs.map(job => job.id));
+                      }
+                    }}
+                    disabled={bulkCloseMutation.isPending}
+                  >
+                    {bulkCloseMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Archive size={14} />}
+                    Close Selected
+                  </Button>
+                </>
+              )}
             </>
           )}
           {closedJobs.length > 0 && (
@@ -263,15 +301,19 @@ export default function Jobs() {
                 </div>
                 <div className="space-y-2">
                   {stageJobs.map(job => (
-                    <Card key={job.id} className={`border transition-colors cursor-pointer ${selectedJobIds.includes(job.id) ? "border-primary bg-primary/5" : "border-card-border hover:border-primary/30"}`} onClick={() => setSelectedJob(job)}>
+                    <Card key={job.id} className={`border transition-colors cursor-pointer ${selectedJobIds.includes(job.id) ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-card-border hover:border-primary/30"}`} onClick={() => handleJobCardClick(job)}>
                       <CardContent className="p-3 space-y-2">
                         <div className="flex items-start gap-2">
                           <input
                             type="checkbox"
                             aria-label={`Select ${job.title}`}
                             checked={selectedJobIds.includes(job.id)}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={() => toggleJobSelection(job.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectionMode(true);
+                              toggleJobSelection(job.id);
+                            }}
+                            onChange={() => {}}
                             className="mt-0.5 h-4 w-4 rounded border-input accent-primary"
                           />
                           <div className="min-w-0">
