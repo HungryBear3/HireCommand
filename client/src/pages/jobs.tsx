@@ -437,6 +437,7 @@ export default function Jobs() {
   const [bulkStage, setBulkStage] = useState("");
   const [placementInvoiceJob, setPlacementInvoiceJob] = useState<Job | null>(null);
   const [candidateToAddId, setCandidateToAddId] = useState("");
+  const [draggedCandidate, setDraggedCandidate] = useState<{ candidateId: number; stage: string } | null>(null);
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const { data: candidates = [] } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"] });
@@ -574,6 +575,24 @@ export default function Jobs() {
     },
     onError: (e: Error) => toast({ title: "Could not update stage", description: e.message, variant: "destructive" }),
   });
+
+  const moveCandidateToStage = (candidate: JobCandidate, status: string) => {
+    if (!selectedJob || candidateStage(candidate) === status) return;
+    updateCandidateStageMutation.mutate({ candidateId: candidate.id, jobId: selectedJob.id, status });
+  };
+
+  const handleCandidateDrop = (status: string) => {
+    if (!selectedJob || !draggedCandidate || draggedCandidate.stage === status) {
+      setDraggedCandidate(null);
+      return;
+    }
+    updateCandidateStageMutation.mutate({
+      candidateId: draggedCandidate.candidateId,
+      jobId: selectedJob.id,
+      status,
+    });
+    setDraggedCandidate(null);
+  };
 
   return (
     <div className="space-y-4">
@@ -807,51 +826,45 @@ export default function Jobs() {
                   )}
                 </div>
 
-                {selectedJob.description && (
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Description</p>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{selectedJob.description}</p>
-                  </div>
-                )}
-
-                {reqs.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Requirements</p>
-                    <ul className="space-y-1.5">
-                      {reqs.map((r, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                          <ChevronRight size={12} className="mt-1 text-primary flex-shrink-0" />{r}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
                 <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Candidate Pipeline Kanban</p>
-                      <p className="text-xs text-muted-foreground">Per-job stages. Add candidates here, then move them through this job's pipeline.</p>
+                      <p className="text-xs text-muted-foreground">Per-job stages. Drag candidates between columns or use the stage selector.</p>
                     </div>
                     <Badge variant="secondary">{selectedJobCandidates.length} assigned</Badge>
                   </div>
                   <div className="grid min-w-[920px] grid-cols-6 gap-2 overflow-x-auto pb-1">
                     {selectedJobCandidatesByStage.map(stage => (
-                      <div key={stage.key} className={`min-h-36 rounded-lg border p-2 ${stage.color}`}>
+                      <div
+                        key={stage.key}
+                        className={`min-h-36 rounded-lg border p-2 transition-colors ${stage.color} ${draggedCandidate && draggedCandidate.stage !== stage.key ? "ring-1 ring-primary/30" : ""}`}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => handleCandidateDrop(stage.key)}
+                      >
                         <div className="flex items-center justify-between mb-2">
                           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{stage.label}</p>
                           <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{stage.candidates.length}</Badge>
                         </div>
                         <div className="space-y-2">
                           {stage.candidates.map(candidate => (
-                            <div key={candidate.id} className="rounded-md border border-border bg-background/95 p-2 shadow-sm">
+                            <div
+                              key={candidate.id}
+                              draggable={!updateCandidateStageMutation.isPending}
+                              onDragStart={(e) => {
+                                e.dataTransfer.effectAllowed = "move";
+                                setDraggedCandidate({ candidateId: candidate.id, stage: candidateStage(candidate) });
+                              }}
+                              onDragEnd={() => setDraggedCandidate(null)}
+                              className={`rounded-md border border-border bg-background/95 p-2 shadow-sm transition cursor-grab active:cursor-grabbing ${draggedCandidate?.candidateId === candidate.id ? "opacity-50" : "hover:border-primary/40"}`}
+                            >
                               <p className="text-xs font-medium leading-tight">{candidate.name}</p>
                               <p className="text-[11px] text-muted-foreground truncate">{candidate.title || "Candidate"}</p>
                               {candidate.company && <p className="text-[10px] text-muted-foreground truncate">{candidate.company}</p>}
                               <div className="mt-2">
                                 <select
                                   value={candidateStage(candidate)}
-                                  onChange={(e) => updateCandidateStageMutation.mutate({ candidateId: candidate.id, jobId: selectedJob.id, status: e.target.value })}
+                                  onChange={(e) => moveCandidateToStage(candidate, e.target.value)}
                                   className="h-7 w-full rounded-md border border-input bg-background px-1.5 text-[11px]"
                                   disabled={updateCandidateStageMutation.isPending}
                                 >
@@ -892,6 +905,26 @@ export default function Jobs() {
                     </Button>
                   </div>
                 </div>
+
+                {selectedJob.description && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Description</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{selectedJob.description}</p>
+                  </div>
+                )}
+
+                {reqs.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Requirements</p>
+                    <ul className="space-y-1.5">
+                      {reqs.map((r, i) => (
+                        <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                          <ChevronRight size={12} className="mt-1 text-primary flex-shrink-0" />{r}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 <div className="flex gap-2 pt-2">
                   {selectedJob.stage !== "placed" && selectedJob.stage !== "closed" && (
