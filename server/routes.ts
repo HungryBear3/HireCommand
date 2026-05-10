@@ -165,7 +165,11 @@ export async function registerRoutes(
   });
 
   app.get("/api/companies", async (_req, res) => {
-    const [allJobs, allCandidates] = await Promise.all([storage.getJobs(), storage.getCandidates()]);
+    const [allJobs, allCandidates, syncedCompanies] = await Promise.all([
+      storage.getJobs(),
+      storage.getCandidates(),
+      storage.getLoxoCompanies(),
+    ]);
     const companyMap = new Map<string, any>();
 
     const normalize = (name: string) => name.trim().replace(/\s+/g, " ");
@@ -197,6 +201,17 @@ export async function registerRoutes(
       }
       return companyMap.get(key);
     };
+
+    for (const synced of syncedCompanies) {
+      const company = upsert(synced.name, { location: synced.location });
+      if (!company) continue;
+      company.sector = synced.industry || "Loxo CRM";
+      company.peSponsor = synced.ownerName ? `Owner: ${synced.ownerName}` : "Synced from Loxo Companies";
+      company.location = synced.location || company.location;
+      company.website = synced.website;
+      company.syncedAt = synced.syncedAt;
+      if (!company.signals.includes("loxo-company")) company.signals.push("loxo-company");
+    }
 
     for (const job of allJobs) {
       const company = upsert(job.company, { location: job.location });
@@ -230,6 +245,11 @@ export async function registerRoutes(
       .sort((a, b) => (b.openJobs - a.openJobs) || (b.candidateCount - a.candidateCount) || a.name.localeCompare(b.name));
 
     res.json(companies);
+  });
+
+  app.get("/api/clients", async (_req, res) => {
+    const data = await storage.getLoxoClients();
+    res.json(data);
   });
 
   app.get("/api/jobs/:id", async (req, res) => {
@@ -543,7 +563,24 @@ export async function registerRoutes(
     const cityState = compactLocation(record.city, record.state || record.state_code);
     const zip = record.zip || record.zip_code || record.postal_code || record.postcode;
     const withZip = compactLocation(cityState, zip);
-    return withZip || record.location || record.macro_address || "";
+    return withZip || record.location || record.macro_address || record.address?.city || "";
+  };
+
+  const loxoEmail = (record: any): string => record.email || record.emails?.[0]?.value || record.emails?.[0]?.email || "";
+  const loxoPhone = (record: any): string => record.phone || record.phones?.[0]?.value || record.phones?.[0]?.phone || "";
+  const loxoList = (data: any, keys: string[]): any[] => {
+    for (const key of keys) if (Array.isArray(data?.[key])) return data[key];
+    if (Array.isArray(data?.results)) return data.results;
+    if (Array.isArray(data?.data)) return data.data;
+    return [];
+  };
+  const isActiveLoxoJob = (job: any): boolean => {
+    const raw = [job.status?.name, job.status, job.state, job.workflow_state, job.job_status]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (!raw) return true;
+    return !/(closed|inactive|archived|cancelled|canceled|filled|placed|lost|on hold|hold)/.test(raw);
   };
 
   // Save credentials
@@ -577,11 +614,17 @@ export async function registerRoutes(
     const lastSync = await storage.getSetting("loxo_last_sync");
     const candidatesSynced = await storage.getSetting("loxo_candidates_synced");
     const jobsSynced = await storage.getSetting("loxo_jobs_synced");
+    const companiesSynced = await storage.getSetting("loxo_companies_synced");
+    const clientsSynced = await storage.getSetting("loxo_clients_synced");
+    const activeJobsSynced = await storage.getSetting("loxo_active_jobs_synced");
     const syncRunning = await storage.getSetting("loxo_sync_running");
     res.json({
       lastSync: lastSync || null,
       candidatesSynced: candidatesSynced ? parseInt(candidatesSynced) : 0,
       jobsSynced: jobsSynced ? parseInt(jobsSynced) : 0,
+      activeJobsSynced: activeJobsSynced ? parseInt(activeJobsSynced) : 0,
+      companiesSynced: companiesSynced ? parseInt(companiesSynced) : 0,
+      clientsSynced: clientsSynced ? parseInt(clientsSynced) : 0,
       isRunning: syncRunning === "true",
     });
   });
@@ -600,12 +643,16 @@ export async function registerRoutes(
 
     await storage.setSetting("loxo_sync_running", "true");
     let totalCandidates = 0;
+    let totalCompanies = 0;
+    let totalClients = 0;
     let totalJobs = 0;
+    let totalActiveJobs = 0;
+    const activeJobLoxoIds: number[] = [];
 
     try {
       // --- Sync People (candidates) via scroll_id pagination ---
       send({ phase: "people", message: "Fetching candidates from Loxo...", progress: 0 });
-      const maxPeople = parseInt((req.query.maxPeople as string) || "500");
+      const maxPeople = parseInt((req.query.maxPeople as string) || "10000");
       let scrollId: string | null = null;
       let scrollPage = 0;
       const perPage = 25;
@@ -668,13 +715,92 @@ export async function registerRoutes(
       }
 
       await storage.setSetting("loxo_candidates_synced", String(totalCandidates));
-      send({ phase: "people", message: `✓ ${totalCandidates} candidates synced`, progress: 50 });
+      send({ phase: "people", message: `✓ ${totalCandidates} candidates synced`, progress: 35 });
 
-      // --- Sync Jobs ---
-      send({ phase: "jobs", message: "Fetching jobs from Loxo...", progress: 50 });
+      // --- Sync Companies ---
+      send({ phase: "companies", message: "Fetching companies from Loxo...", progress: 35 });
+      for (const endpoint of ["companies", "client_companies"]) {
+        let page = 1;
+        let hasMore = true;
+        while (hasMore && page <= 500) {
+          const r = await fetch(`${LOXO_BASE}/${slug}/${endpoint}?per_page=100&page=${page}`, {
+            headers: { Authorization: `Token ${apiKey}` },
+          });
+          if (r.status === 404) break;
+          if (!r.ok) { send({ phase: "companies", message: `Skipping ${endpoint}: Loxo returned ${r.status}` }); break; }
+          const data: any = await r.json();
+          const records = loxoList(data, ["companies", "client_companies"]);
+          if (records.length === 0) break;
+
+          for (const c of records) {
+            if (!c.id || !c.name) continue;
+            await storage.upsertLoxoCompany({
+              loxoId: c.id,
+              name: c.name,
+              website: c.website || c.url || "",
+              location: loxoLocation(c),
+              industry: c.industry || c.sector || c.company_type || "",
+              ownerName: c.owner?.name || c.owner_name || c.recruiter?.name || "",
+              rawJson: JSON.stringify(c),
+              syncedAt: new Date().toISOString(),
+            });
+            totalCompanies++;
+          }
+
+          send({ phase: "companies", message: `Synced ${totalCompanies} companies...`, progress: 35 + Math.min(15, page), count: totalCompanies });
+          hasMore = page < (data.total_pages || page);
+          page++;
+        }
+        if (totalCompanies > 0) break;
+      }
+      await storage.setSetting("loxo_companies_synced", String(totalCompanies));
+      send({ phase: "companies", message: `✓ ${totalCompanies} companies synced`, progress: 50 });
+
+      // --- Sync Clients / Contacts ---
+      send({ phase: "clients", message: "Fetching clients and contacts from Loxo...", progress: 50 });
+      for (const endpoint of ["clients", "contacts"]) {
+        let page = 1;
+        let hasMore = true;
+        while (hasMore && page <= 500) {
+          const r = await fetch(`${LOXO_BASE}/${slug}/${endpoint}?per_page=100&page=${page}`, {
+            headers: { Authorization: `Token ${apiKey}` },
+          });
+          if (r.status === 404) break;
+          if (!r.ok) { send({ phase: "clients", message: `Skipping ${endpoint}: Loxo returned ${r.status}` }); break; }
+          const data: any = await r.json();
+          const records = loxoList(data, ["clients", "contacts", "people"]);
+          if (records.length === 0) break;
+
+          for (const c of records) {
+            if (!c.id || !c.name) continue;
+            await storage.upsertLoxoClient({
+              loxoId: c.id,
+              name: c.name,
+              company: c.company?.name || c.current_company || c.company_name || "",
+              title: c.title || c.current_title || "",
+              email: loxoEmail(c),
+              phone: loxoPhone(c),
+              location: loxoLocation(c),
+              rawJson: JSON.stringify(c),
+              syncedAt: new Date().toISOString(),
+            });
+            totalClients++;
+          }
+
+          send({ phase: "clients", message: `Synced ${totalClients} clients/contacts...`, progress: 50 + Math.min(10, page), count: totalClients });
+          hasMore = page < (data.total_pages || page);
+          page++;
+        }
+        if (totalClients > 0) break;
+      }
+      await storage.setSetting("loxo_clients_synced", String(totalClients));
+      send({ phase: "clients", message: `✓ ${totalClients} clients/contacts synced`, progress: 60 });
+
+      // --- Sync Active Jobs ---
+      send({ phase: "jobs", message: "Fetching current active jobs from Loxo...", progress: 60 });
       let jobPage = 1;
       let hasMoreJobs = true;
-      const maxJobPages = parseInt((req.query.maxJobPages as string) || "10"); // default ~100 active jobs
+      const maxJobPages = parseInt((req.query.maxJobPages as string) || "1000"); // default: pull every page returned by Loxo
 
       while (hasMoreJobs && jobPage <= maxJobPages) {
         const r = await fetch(
@@ -687,15 +813,16 @@ export async function registerRoutes(
         if (jobsList.length === 0) { hasMoreJobs = false; break; }
 
         for (const j of jobsList) {
-          const statusName: string = j.status?.name?.toLowerCase() || "";
-          // Map to internal stage
-          let stage = "intake";
-          if (statusName.includes("active") || statusName.includes("open")) stage = "sourcing";
-          else if (statusName.includes("screen")) stage = "screening";
+          if (!isActiveLoxoJob(j)) continue;
+          activeJobLoxoIds.push(j.id);
+          totalActiveJobs++;
+
+          const statusName: string = (j.status?.name || j.status || "").toLowerCase();
+          // Map active Loxo jobs to internal pipeline stage
+          let stage = "sourcing";
+          if (statusName.includes("screen")) stage = "screening";
           else if (statusName.includes("interview")) stage = "interview";
           else if (statusName.includes("offer")) stage = "offer";
-          else if (statusName.includes("placed") || statusName.includes("filled")) stage = "placed";
-          else if (statusName.includes("closed") || statusName.includes("inactive")) stage = "closed"; // closed out
 
           const location = loxoLocation(j);
           const companyName = j.company?.name || "Unknown Company";
@@ -727,8 +854,8 @@ export async function registerRoutes(
         const totalPages = data.total_pages || 1;
         send({
           phase: "jobs",
-          message: `Synced ${totalJobs} jobs (page ${jobPage}/${Math.min(maxJobPages, totalPages)})`,
-          progress: 50 + Math.round((jobPage / Math.min(maxJobPages, totalPages)) * 50),
+          message: `Synced ${totalActiveJobs} active jobs (page ${jobPage}/${Math.min(maxJobPages, totalPages)})`,
+          progress: 60 + Math.round((jobPage / Math.min(maxJobPages, totalPages)) * 40),
           count: totalJobs,
         });
 
@@ -736,16 +863,23 @@ export async function registerRoutes(
         jobPage++;
       }
 
+      const closedMissing = await storage.closeMissingLoxoJobs(activeJobLoxoIds);
       await storage.setSetting("loxo_jobs_synced", String(totalJobs));
+      await storage.setSetting("loxo_active_jobs_synced", String(totalActiveJobs));
+      await storage.setSetting("loxo_jobs_closed_missing", String(closedMissing));
       await storage.setSetting("loxo_last_sync", new Date().toISOString());
       await storage.setSetting("loxo_sync_running", "false");
 
       send({
         phase: "complete",
-        message: `✓ Sync complete — ${totalCandidates} candidates, ${totalJobs} jobs imported`,
+        message: `✓ Full Loxo sync complete — ${totalCandidates} candidates, ${totalClients} clients, ${totalCompanies} companies, ${totalActiveJobs} active jobs imported`,
         progress: 100,
         candidatesSynced: totalCandidates,
+        clientsSynced: totalClients,
+        companiesSynced: totalCompanies,
         jobsSynced: totalJobs,
+        activeJobsSynced: totalActiveJobs,
+        closedMissingJobs: closedMissing,
       });
       res.end();
     } catch (e: any) {

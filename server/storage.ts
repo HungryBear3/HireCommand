@@ -2,6 +2,8 @@ import {
   type User, type InsertUser, users,
   type Candidate, type InsertCandidate, candidates,
   type Job, type InsertJob, jobs,
+  type LoxoCompany, type InsertLoxoCompany, loxoCompanies,
+  type LoxoClient, type InsertLoxoClient, loxoClients,
   type CandidateJobAssignment, type InsertCandidateJobAssignment, candidateJobAssignments,
   type Opportunity, type InsertOpportunity, opportunities,
   type Campaign, type InsertCampaign, campaigns,
@@ -46,6 +48,33 @@ async function ensureRuntimeSchema() {
       created_at text NOT NULL,
       updated_at text NOT NULL,
       UNIQUE(candidate_id, job_id)
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS loxo_companies (
+      id serial PRIMARY KEY,
+      loxo_id integer UNIQUE,
+      name text NOT NULL,
+      website text NOT NULL DEFAULT '',
+      location text NOT NULL DEFAULT '',
+      industry text NOT NULL DEFAULT '',
+      owner_name text NOT NULL DEFAULT '',
+      raw_json text NOT NULL DEFAULT '{}',
+      synced_at text NOT NULL
+    )
+  `);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS loxo_clients (
+      id serial PRIMARY KEY,
+      loxo_id integer UNIQUE,
+      name text NOT NULL,
+      company text NOT NULL DEFAULT '',
+      title text NOT NULL DEFAULT '',
+      email text NOT NULL DEFAULT '',
+      phone text NOT NULL DEFAULT '',
+      location text NOT NULL DEFAULT '',
+      raw_json text NOT NULL DEFAULT '{}',
+      synced_at text NOT NULL
     )
   `);
 }
@@ -94,6 +123,11 @@ export interface IStorage {
   getJobByLoxoId(loxoId: number): Promise<Job | undefined>;
   upsertCandidateFromLoxo(c: InsertCandidate & { loxoId: number }): Promise<Candidate>;
   upsertJobFromLoxo(j: InsertJob & { loxoId: number }): Promise<Job>;
+  closeMissingLoxoJobs(activeLoxoIds: number[]): Promise<number>;
+  getLoxoCompanies(): Promise<LoxoCompany[]>;
+  upsertLoxoCompany(c: InsertLoxoCompany & { loxoId: number }): Promise<LoxoCompany>;
+  getLoxoClients(): Promise<LoxoClient[]>;
+  upsertLoxoClient(c: InsertLoxoClient & { loxoId: number }): Promise<LoxoClient>;
   // Placements
   getPlacements(): Promise<Placement[]>;
   getPlacement(id: number): Promise<Placement | undefined>;
@@ -304,6 +338,41 @@ export class DatabaseStorage implements IStorage {
       return rows[0];
     }
     const rows = await db.insert(jobs).values(j).returning();
+    return rows[0];
+  }
+  async closeMissingLoxoJobs(activeLoxoIds: number[]) {
+    if (activeLoxoIds.length === 0) return 0;
+    const result: any = await db.execute(sql`
+      UPDATE jobs
+      SET stage = 'closed'
+      WHERE loxo_id IS NOT NULL
+        AND stage <> 'closed'
+        AND NOT (loxo_id = ANY(${activeLoxoIds}::int[]))
+    `);
+    return result.count ?? 0;
+  }
+  async getLoxoCompanies() {
+    return db.select().from(loxoCompanies).orderBy(loxoCompanies.name);
+  }
+  async upsertLoxoCompany(c: InsertLoxoCompany & { loxoId: number }) {
+    const existing = (await db.select().from(loxoCompanies).where(eq(loxoCompanies.loxoId, c.loxoId)))[0];
+    if (existing) {
+      const rows = await db.update(loxoCompanies).set(c).where(eq(loxoCompanies.loxoId, c.loxoId)).returning();
+      return rows[0];
+    }
+    const rows = await db.insert(loxoCompanies).values(c).returning();
+    return rows[0];
+  }
+  async getLoxoClients() {
+    return db.select().from(loxoClients).orderBy(loxoClients.name);
+  }
+  async upsertLoxoClient(c: InsertLoxoClient & { loxoId: number }) {
+    const existing = (await db.select().from(loxoClients).where(eq(loxoClients.loxoId, c.loxoId)))[0];
+    if (existing) {
+      const rows = await db.update(loxoClients).set(c).where(eq(loxoClients.loxoId, c.loxoId)).returning();
+      return rows[0];
+    }
+    const rows = await db.insert(loxoClients).values(c).returning();
     return rows[0];
   }
 

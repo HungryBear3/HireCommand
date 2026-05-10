@@ -60,7 +60,10 @@ interface QBStatus {
 interface SyncStatus {
   lastSync: string | null;
   candidatesSynced: number;
+  clientsSynced?: number;
+  companiesSynced?: number;
   jobsSynced: number;
+  activeJobsSynced?: number;
   isRunning: boolean;
 }
 
@@ -355,7 +358,10 @@ export default function Settings() {
               setSyncStatus({
                 lastSync: new Date().toISOString(),
                 candidatesSynced: msg.candidatesSynced,
+                clientsSynced: msg.clientsSynced,
+                companiesSynced: msg.companiesSynced,
                 jobsSynced: msg.jobsSynced,
+                activeJobsSynced: msg.activeJobsSynced,
                 isRunning: false,
               });
               eventSource.close();
@@ -372,11 +378,13 @@ export default function Settings() {
       // Invalidate all data caches so the app reloads with real data
       queryClient.invalidateQueries({ queryKey: ["/api/candidates"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
 
       toast({
         title: "Sync complete!",
-        description: `${syncStatus?.candidatesSynced ?? ""} candidates and ${syncStatus?.jobsSynced ?? ""} jobs imported from Loxo.`,
+        description: "Candidates, clients, companies, and current active jobs imported from Loxo.",
       });
     } catch (e: any) {
       toast({ title: "Sync failed", description: e.message, variant: "destructive" });
@@ -597,7 +605,9 @@ export default function Settings() {
               <div className="flex flex-wrap gap-4 text-xs text-muted-foreground bg-background rounded-lg px-3 py-2.5 border border-border">
                 <span>Last sync: <span className="font-medium text-foreground">{formatLastSync(syncStatus.lastSync)}</span></span>
                 <span>Candidates: <span className="font-medium text-foreground">{syncStatus.candidatesSynced.toLocaleString()}</span></span>
-                <span>Jobs: <span className="font-medium text-foreground">{syncStatus.jobsSynced.toLocaleString()}</span></span>
+                <span>Clients: <span className="font-medium text-foreground">{(syncStatus.clientsSynced ?? 0).toLocaleString()}</span></span>
+                <span>Companies: <span className="font-medium text-foreground">{(syncStatus.companiesSynced ?? 0).toLocaleString()}</span></span>
+                <span>Active jobs: <span className="font-medium text-foreground">{(syncStatus.activeJobsSynced ?? syncStatus.jobsSynced).toLocaleString()}</span></span>
               </div>
             )}
 
@@ -694,7 +704,7 @@ export default function Settings() {
               </Button>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Sync imports up to 500 candidates and 250 jobs. Re-run anytime — existing records are updated, not duplicated.
+              Full resync imports candidates, clients/contacts, companies, and all current active jobs. Re-run anytime — existing records are updated, not duplicated.
             </p>
           </div>
 

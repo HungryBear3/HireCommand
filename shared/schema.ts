@@ -48,6 +48,31 @@ export const jobs = pgTable("jobs", {
   requirements: text("requirements").notNull(), // JSON array
 });
 
+export const loxoCompanies = pgTable("loxo_companies", {
+  id: serial("id").primaryKey(),
+  loxoId: integer("loxo_id").unique(),
+  name: text("name").notNull(),
+  website: text("website").notNull().default(""),
+  location: text("location").notNull().default(""),
+  industry: text("industry").notNull().default(""),
+  ownerName: text("owner_name").notNull().default(""),
+  rawJson: text("raw_json").notNull().default("{}"),
+  syncedAt: text("synced_at").notNull(),
+});
+
+export const loxoClients = pgTable("loxo_clients", {
+  id: serial("id").primaryKey(),
+  loxoId: integer("loxo_id").unique(),
+  name: text("name").notNull(),
+  company: text("company").notNull().default(""),
+  title: text("title").notNull().default(""),
+  email: text("email").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  location: text("location").notNull().default(""),
+  rawJson: text("raw_json").notNull().default("{}"),
+  syncedAt: text("synced_at").notNull(),
+});
+
 export const candidateJobAssignments = pgTable("candidate_job_assignments", {
   id: serial("id").primaryKey(),
   candidateId: integer("candidate_id").notNull(),
@@ -221,6 +246,8 @@ export const schedulingSessions = pgTable("scheduling_sessions", {
 });
 
 export const insertJobSchema = createInsertSchema(jobs).omit({ id: true });
+export const insertLoxoCompanySchema = createInsertSchema(loxoCompanies).omit({ id: true });
+export const insertLoxoClientSchema = createInsertSchema(loxoClients).omit({ id: true });
 export const insertCandidateJobAssignmentSchema = createInsertSchema(candidateJobAssignments).omit({ id: true });
 export const insertOpportunitySchema = createInsertSchema(opportunities).omit({ id: true });
 export const insertCampaignSchema = createInsertSchema(campaigns).omit({ id: true });
@@ -238,6 +265,10 @@ export type Candidate = typeof candidates.$inferSelect;
 export type InsertCandidate = z.infer<typeof insertCandidateSchema>;
 export type Job = typeof jobs.$inferSelect;
 export type InsertJob = z.infer<typeof insertJobSchema>;
+export type LoxoCompany = typeof loxoCompanies.$inferSelect;
+export type InsertLoxoCompany = z.infer<typeof insertLoxoCompanySchema>;
+export type LoxoClient = typeof loxoClients.$inferSelect;
+export type InsertLoxoClient = z.infer<typeof insertLoxoClientSchema>;
 export type CandidateJobAssignment = typeof candidateJobAssignments.$inferSelect;
 export type InsertCandidateJobAssignment = z.infer<typeof insertCandidateJobAssignmentSchema>;
 export type Opportunity = typeof opportunities.$inferSelect;
