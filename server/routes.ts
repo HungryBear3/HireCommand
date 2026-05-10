@@ -839,6 +839,41 @@ export async function registerRoutes(
     const activeJobLoxoIds: number[] = [];
 
     try {
+      const seenCompanyKeys = new Set<string>();
+      const companyKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+      const syntheticCompanyId = (name: string) => {
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+        return -Math.max(1, Math.abs(hash));
+      };
+      const companyNameFrom = (value: any): string => {
+        if (!value) return "";
+        if (typeof value === "string") return value;
+        return value.name || value.company_name || value.title || "";
+      };
+      const syncCompanyFromLoxo = async (rawCompany: any, fallbackName = "") => {
+        const name = companyNameFrom(rawCompany) || fallbackName;
+        const normalized = name.trim().replace(/\s+/g, " ");
+        if (!normalized || /^unknown( company)?$/i.test(normalized)) return false;
+        const key = companyKey(normalized);
+        if (seenCompanyKeys.has(key)) return false;
+        seenCompanyKeys.add(key);
+
+        const raw = rawCompany && typeof rawCompany === "object" ? rawCompany : { name: normalized };
+        await storage.upsertLoxoCompany({
+          loxoId: Number(raw.id) || syntheticCompanyId(key),
+          name: normalized,
+          website: raw.website || raw.url || raw.domain || "",
+          location: loxoLocation(raw),
+          industry: raw.industry || raw.sector || raw.company_type || "",
+          ownerName: raw.owner?.name || raw.owner_name || raw.recruiter?.name || "",
+          rawJson: JSON.stringify(raw),
+          syncedAt: new Date().toISOString(),
+        });
+        totalCompanies++;
+        return true;
+      };
+
       // --- Sync People (candidates) via scroll_id first, then page fallback ---
       send({ phase: "people", message: "Fetching all candidates from Loxo...", progress: 0 });
       const maxPeopleParam = parseInt((req.query.maxPeople as string) || "0");
@@ -881,6 +916,7 @@ export async function registerRoutes(
           };
 
           await storage.upsertCandidateFromLoxo(scoredCandidate);
+          await syncCompanyFromLoxo(p.company || p.current_company || p.current_company_name, candidate.company);
           totalCandidates++;
         }
       };
@@ -959,17 +995,7 @@ export async function registerRoutes(
 
           for (const c of records) {
             if (!c.id || !c.name) continue;
-            await storage.upsertLoxoCompany({
-              loxoId: c.id,
-              name: c.name,
-              website: c.website || c.url || "",
-              location: loxoLocation(c),
-              industry: c.industry || c.sector || c.company_type || "",
-              ownerName: c.owner?.name || c.owner_name || c.recruiter?.name || "",
-              rawJson: JSON.stringify(c),
-              syncedAt: new Date().toISOString(),
-            });
-            totalCompanies++;
+            await syncCompanyFromLoxo(c);
           }
 
           send({ phase: "companies", message: `Synced ${totalCompanies} companies...`, progress: 35 + Math.min(15, page), count: totalCompanies });
@@ -1009,6 +1035,7 @@ export async function registerRoutes(
               rawJson: JSON.stringify(c),
               syncedAt: new Date().toISOString(),
             });
+            await syncCompanyFromLoxo(c.company || c.current_company || c.company_name, c.company?.name || c.current_company || c.company_name || "");
             totalClients++;
           }
 
@@ -1079,6 +1106,7 @@ export async function registerRoutes(
           };
 
           await storage.upsertJobFromLoxo(job);
+          await syncCompanyFromLoxo(j.company || companyName, companyName);
           totalJobs++;
         }
 
