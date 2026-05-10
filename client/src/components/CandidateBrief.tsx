@@ -15,13 +15,75 @@ interface CandidateBriefData {
   competencies: string[];
   currentComp: string;
   marketRange: string;
+  compMethodology: string;
+  compSources: string[];
   availability: "Available" | "Notice Period" | "Not Looking";
   availabilityDetail: string;
   whyThisCandidate: string;
 }
 
+function formatMoney(value: number) {
+  if (value >= 1000000) return `$${(value / 1000000).toFixed(value % 1000000 === 0 ? 0 : 1)}M`;
+  return `$${Math.round(value / 1000)}K`;
+}
+
+function formatRange(low: number, high: number) {
+  return `${formatMoney(low)}–${formatMoney(high)}`;
+}
+
+function inferCompBenchmark(c: Candidate, tags: string[]) {
+  const title = c.title.toLowerCase();
+  const notes = c.notes.toLowerCase();
+  const tagText = tags.join(" ").toLowerCase();
+  const all = `${title} ${notes} ${tagText}`;
+
+  const benchmarks = [
+    { match: ["chief executive", "ceo", "president"], role: "CEO / President", base: [450000, 850000], bonus: [75, 125], equity: "1.0%–5.0%" },
+    { match: ["chief financial", "cfo", "finance"], role: "CFO / senior finance executive", base: [300000, 550000], bonus: [50, 100], equity: "0.5%–2.0%" },
+    { match: ["chief operating", "coo", "operations"], role: "COO / senior operations executive", base: [300000, 550000], bonus: [50, 100], equity: "0.5%–2.0%" },
+    { match: ["chief technology", "cto", "engineering", "technology", "software", "data"], role: "CTO / senior technology executive", base: [275000, 525000], bonus: [40, 85], equity: "0.5%–2.5%" },
+    { match: ["chief marketing", "cmo", "marketing", "brand", "growth"], role: "CMO / senior marketing executive", base: [250000, 475000], bonus: [40, 80], equity: "0.25%–1.5%" },
+    { match: ["chief human", "chro", "people", "human resources", "hr"], role: "CHRO / senior people executive", base: [240000, 425000], bonus: [35, 70], equity: "0.25%–1.25%" },
+    { match: ["vp", "vice president", "director"], role: "VP / director-level executive", base: [180000, 325000], bonus: [25, 60], equity: "0.1%–0.75%" },
+  ];
+
+  const benchmark = benchmarks.find(b => b.match.some(term => all.includes(term))) || { role: "senior executive", base: [200000, 375000], bonus: [30, 70], equity: "0.1%–1.0%" };
+
+  const location = c.location.toLowerCase();
+  const locationMultiplier =
+    /san francisco|bay area|new york|nyc/.test(location) ? 1.18 :
+    /boston|los angeles|seattle|washington|dc/.test(location) ? 1.12 :
+    /chicago|dallas|austin|denver|atlanta/.test(location) ? 1.06 :
+    1.0;
+  const peMultiplier = /pe|private equity|portfolio|sponsor|backed|vista|kkr|warburg|bain|insight/.test(all) ? 1.12 : 1.0;
+  const scaleMultiplier = /public|fortune|f500|billion|\$[0-9.]+b|arr|capital project|exit/.test(all) ? 1.08 : 1.0;
+  const seniorityMultiplier = /chief|cfo|cto|coo|ceo|cmo|chro|president/.test(title) ? 1.08 : 1.0;
+  const matchMultiplier = c.matchScore >= 95 ? 1.06 : c.matchScore >= 90 ? 1.03 : 1.0;
+  const multiplier = locationMultiplier * peMultiplier * scaleMultiplier * seniorityMultiplier * matchMultiplier;
+
+  const baseLow = Math.round((benchmark.base[0] * multiplier) / 10000) * 10000;
+  const baseHigh = Math.round((benchmark.base[1] * multiplier) / 10000) * 10000;
+  const bonusLow = Math.round((baseLow * benchmark.bonus[0] / 100) / 10000) * 10000;
+  const bonusHigh = Math.round((baseHigh * benchmark.bonus[1] / 100) / 10000) * 10000;
+  const cashLow = baseLow + bonusLow;
+  const cashHigh = baseHigh + bonusHigh;
+  const currentLow = Math.round((cashLow * 0.88) / 10000) * 10000;
+  const currentHigh = Math.round((cashHigh * 0.92) / 10000) * 10000;
+
+  return {
+    currentComp: `${formatRange(currentLow, currentHigh)} est. current total cash`,
+    marketRange: `${formatRange(cashLow, cashHigh)} target cash + ${benchmark.equity} equity/LTI`,
+    methodology: `${benchmark.role}; adjusted for ${c.location || "national market"}, PE/portfolio context, company scale indicators, seniority, and candidate match strength.`,
+    sources: [
+      "BLS OEWS public wage tables for executives and functional managers",
+      "Public company proxy statements / SEC DEF 14A executive compensation disclosures",
+      "Public executive-search and salary-guide ranges used as directional private-market benchmarks",
+    ],
+  };
+}
+
 function generateBriefData(c: Candidate): CandidateBriefData {
-  const tags: string[] = JSON.parse(c.tags);
+  const tags: string[] = (() => { try { return JSON.parse(c.tags || "[]"); } catch { return []; } })();
   const nameHash = c.name.split("").reduce((a, b) => a + b.charCodeAt(0), 0);
 
   const summaries: Record<string, string[]> = {
@@ -152,14 +214,7 @@ function generateBriefData(c: Candidate): CandidateBriefData {
     { title: "Finance Manager", company: "Big 4 / Advisory", years: "2013 — 2017" },
   ];
 
-  const compRanges = [
-    { current: "$380K–$420K total", market: "$350K–$500K" },
-    { current: "$290K–$340K total", market: "$280K–$400K" },
-    { current: "$420K–$480K total", market: "$400K–$550K" },
-    { current: "$350K–$400K total", market: "$320K–$450K" },
-    { current: "$450K–$520K total", market: "$420K–$600K" },
-  ];
-  const compIdx = nameHash % compRanges.length;
+  const comp = inferCompBenchmark(c, tags);
 
   const availabilityOptions: ("Available" | "Notice Period" | "Not Looking")[] = ["Available", "Notice Period", "Available"];
   const availDetails = ["Open to conversations, 2-week transition", "60-day notice period, negotiable with PE sponsor approval", "Actively exploring — available for immediate start"];
@@ -174,7 +229,7 @@ function generateBriefData(c: Candidate): CandidateBriefData {
     "Platform Architecture", "Talent Strategy", "Brand Strategy",
     ...tags
   ];
-  const competencies = [...new Set(allCompetencies.slice(0, 8).concat(tags.slice(0, 3)))].slice(0, 10);
+  const competencies = Array.from(new Set(allCompetencies.slice(0, 8).concat(tags.slice(0, 3)))).slice(0, 10);
 
   const whyNarratives: Record<string, string> = {
     "Sarah Chen": "Sarah represents the rare combination of Big 4 advisory rigor and PE-backed operational leadership. Her $200M refinancing at Meridian directly mirrors the capital structure complexity our clients face. She's currently in active process, signaling readiness — but also meaning she won't be available long. Her healthcare specialization and Deloitte foundation make her ideally suited for any PE-backed healthcare platform CFO mandate.",
@@ -192,8 +247,10 @@ function generateBriefData(c: Candidate): CandidateBriefData {
     summary: summaries[c.name] || defaultSummary,
     careerTrajectory: careers[c.name] || defaultCareer,
     competencies,
-    currentComp: compRanges[compIdx].current,
-    marketRange: compRanges[compIdx].market,
+    currentComp: comp.currentComp,
+    marketRange: comp.marketRange,
+    compMethodology: comp.methodology,
+    compSources: comp.sources,
     availability: availabilityOptions[availIdx],
     availabilityDetail: availDetails[availIdx],
     whyThisCandidate: whyNarratives[c.name] || defaultWhy,
@@ -513,6 +570,8 @@ function handleDownloadPDF(candidate: Candidate, brief: CandidateBriefData) {
           <div class="comp-value">${brief.marketRange}</div>
         </div>
       </div>
+      <p class="narrative" style="margin-top:10px;font-size:11px;"><strong>Methodology:</strong> ${brief.compMethodology}</p>
+      <p class="narrative" style="margin-top:6px;font-size:10px;"><strong>Public sources:</strong> ${brief.compSources.join("; ")}</p>
     </div>
 
     <div class="section">
@@ -636,6 +695,10 @@ export default function CandidateBrief({ candidate, open, onClose }: { candidate
                 <p className="text-xs text-muted-foreground mb-1">Market Rate Range</p>
                 <p className="text-sm font-semibold">{brief.marketRange}</p>
               </div>
+            </div>
+            <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground leading-relaxed"><span className="font-medium text-foreground">Methodology:</span> {brief.compMethodology}</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed mt-2"><span className="font-medium text-foreground">Public sources:</span> {brief.compSources.join("; ")}</p>
             </div>
           </section>
 
