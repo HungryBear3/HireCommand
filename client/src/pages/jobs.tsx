@@ -27,6 +27,21 @@ const ACTIVE_STAGES = [
 
 const CLOSED_STAGE = { key: "closed", label: "Closed", color: "bg-zinc-500" };
 const STAGES = [...ACTIVE_STAGES, CLOSED_STAGE];
+const CANDIDATE_PIPELINE_STAGES = [
+  { key: "sourced", label: "Sourced", color: "border-slate-300 bg-slate-50 dark:bg-slate-900/30" },
+  { key: "contacted", label: "Contacted", color: "border-blue-300 bg-blue-50 dark:bg-blue-950/30" },
+  { key: "screening", label: "Screening", color: "border-cyan-300 bg-cyan-50 dark:bg-cyan-950/30" },
+  { key: "interview", label: "Interview", color: "border-amber-300 bg-amber-50 dark:bg-amber-950/30" },
+  { key: "offer", label: "Offer", color: "border-purple-300 bg-purple-50 dark:bg-purple-950/30" },
+  { key: "placed", label: "Placed", color: "border-green-300 bg-green-50 dark:bg-green-950/30" },
+];
+
+type JobCandidate = Candidate & { assignmentStatus?: string; assignmentNotes?: string };
+
+function candidateStage(candidate: JobCandidate) {
+  const raw = candidate.assignmentStatus || candidate.status || "sourced";
+  return raw === "submitted" ? "sourced" : raw;
+}
 
 interface JobForm {
   title: string; company: string; location: string;
@@ -425,7 +440,7 @@ export default function Jobs() {
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const { data: candidates = [] } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"] });
-  const { data: selectedJobCandidates = [] } = useQuery<Candidate[]>({
+  const { data: selectedJobCandidates = [] } = useQuery<JobCandidate[]>({
     queryKey: ["/api/jobs", selectedJob?.id, "candidates"],
     queryFn: async () => {
       const res = await fetch(`/api/jobs/${selectedJob!.id}/candidates`, { credentials: "include" });
@@ -438,6 +453,10 @@ export default function Jobs() {
   const closedJobs = jobs.filter(job => job.stage === "closed");
   const selectedActiveJobs = activeJobs.filter(job => selectedJobIds.includes(job.id));
   const addableCandidates = candidates.filter(candidate => !selectedJobCandidates.some(assigned => assigned.id === candidate.id));
+  const selectedJobCandidatesByStage = CANDIDATE_PIPELINE_STAGES.map(stage => ({
+    ...stage,
+    candidates: selectedJobCandidates.filter(candidate => candidateStage(candidate) === stage.key),
+  }));
 
   const toggleJobSelection = (jobId: number) => {
     setSelectedJobIds(ids => ids.includes(jobId) ? ids.filter(id => id !== jobId) : [...ids, jobId]);
@@ -541,6 +560,19 @@ export default function Jobs() {
       toast({ title: "Candidate added", description: candidate && selectedJob ? `${candidate.name} was added to ${selectedJob.title}.` : "Candidate was added to the job." });
     },
     onError: (e: Error) => toast({ title: "Could not add candidate", description: e.message, variant: "destructive" }),
+  });
+
+  const updateCandidateStageMutation = useMutation({
+    mutationFn: async ({ candidateId, jobId, status }: { candidateId: number; jobId: number; status: string }) => {
+      const res = await apiRequest("PATCH", `/api/jobs/${jobId}/candidates/${candidateId}`, { status });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", selectedJob?.id, "candidates"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/candidates"] });
+      toast({ title: "Candidate stage updated" });
+    },
+    onError: (e: Error) => toast({ title: "Could not update stage", description: e.message, variant: "destructive" }),
   });
 
   return (
@@ -803,14 +835,41 @@ export default function Jobs() {
                     </div>
                     <Badge variant="secondary">{selectedJobCandidates.length} assigned</Badge>
                   </div>
-                  {selectedJobCandidates.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedJobCandidates.slice(0, 8).map(candidate => (
-                        <Badge key={candidate.id} variant="outline" className="font-normal">{candidate.name}</Badge>
-                      ))}
-                      {selectedJobCandidates.length > 8 && <Badge variant="outline">+{selectedJobCandidates.length - 8} more</Badge>}
-                    </div>
-                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-2 overflow-x-auto pb-1">
+                    {selectedJobCandidatesByStage.map(stage => (
+                      <div key={stage.key} className={`min-h-36 rounded-lg border p-2 ${stage.color}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{stage.label}</p>
+                          <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{stage.candidates.length}</Badge>
+                        </div>
+                        <div className="space-y-2">
+                          {stage.candidates.map(candidate => (
+                            <div key={candidate.id} className="rounded-md border border-border bg-background/95 p-2 shadow-sm">
+                              <p className="text-xs font-medium leading-tight">{candidate.name}</p>
+                              <p className="text-[11px] text-muted-foreground truncate">{candidate.title || candidate.company || "Candidate"}</p>
+                              <div className="mt-2">
+                                <select
+                                  value={candidateStage(candidate)}
+                                  onChange={(e) => updateCandidateStageMutation.mutate({ candidateId: candidate.id, jobId: selectedJob.id, status: e.target.value })}
+                                  className="h-7 w-full rounded-md border border-input bg-background px-1.5 text-[11px]"
+                                  disabled={updateCandidateStageMutation.isPending}
+                                >
+                                  {CANDIDATE_PIPELINE_STAGES.map(option => (
+                                    <option key={option.key} value={option.key}>{option.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          ))}
+                          {stage.candidates.length === 0 && (
+                            <div className="rounded-md border border-dashed border-border/70 bg-background/40 p-2 text-center text-[11px] text-muted-foreground">
+                              No candidates
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                   <div className="flex gap-2">
                     <select
                       value={candidateToAddId}

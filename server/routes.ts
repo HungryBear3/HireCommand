@@ -374,6 +374,22 @@ export async function registerRoutes(
     res.json(data);
   });
 
+  app.patch("/api/jobs/:jobId/candidates/:candidateId", async (req, res) => {
+    const jobId = Number(req.params.jobId);
+    const candidateId = Number(req.params.candidateId);
+    const status = String(req.body?.status || "").trim();
+    const allowed = new Set(["sourced", "contacted", "screening", "interview", "offer", "placed"]);
+    if (!allowed.has(status)) return res.status(400).json({ error: "Invalid candidate stage" });
+    const job = await storage.getJob(jobId);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    const candidate = await storage.getCandidate(candidateId);
+    if (!candidate) return res.status(404).json({ error: "Candidate not found" });
+    const data = await storage.updateCandidateJobStatus(candidateId, jobId, status);
+    if (!data) return res.status(404).json({ error: "Candidate is not assigned to this job" });
+    await storage.updateCandidate(candidateId, { status } as any);
+    res.json(data);
+  });
+
   app.post("/api/jobs", async (req, res) => {
     const parsed = insertJobSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });

@@ -94,8 +94,9 @@ export interface IStorage {
   updateCandidate(id: number, c: Partial<InsertCandidate>): Promise<Candidate | undefined>;
   deleteCandidate(id: number): Promise<void>;
   getCandidateJobs(candidateId: number): Promise<Job[]>;
-  getCandidatesForJob(jobId: number): Promise<Candidate[]>;
+  getCandidatesForJob(jobId: number): Promise<(Candidate & { assignmentStatus?: string; assignmentNotes?: string })[]>;
   addCandidateToJob(candidateId: number, jobId: number): Promise<CandidateJobAssignment>;
+  updateCandidateJobStatus(candidateId: number, jobId: number, status: string): Promise<CandidateJobAssignment | undefined>;
   removeCandidateFromJob(candidateId: number, jobId: number): Promise<void>;
   getJobs(): Promise<Job[]>;
   getJob(id: number): Promise<Job | undefined>;
@@ -205,11 +206,15 @@ export class DatabaseStorage implements IStorage {
   }
   async getCandidatesForJob(jobId: number) {
     const rows = await db
-      .select({ candidate: candidates })
+      .select({ candidate: candidates, assignment: candidateJobAssignments })
       .from(candidateJobAssignments)
       .innerJoin(candidates, eq(candidateJobAssignments.candidateId, candidates.id))
       .where(eq(candidateJobAssignments.jobId, jobId));
-    return rows.map((row) => row.candidate);
+    return rows.map((row) => ({
+      ...row.candidate,
+      assignmentStatus: row.assignment.status,
+      assignmentNotes: row.assignment.notes,
+    }));
   }
   async addCandidateToJob(candidateId: number, jobId: number) {
     const now = new Date().toISOString();
@@ -222,13 +227,22 @@ export class DatabaseStorage implements IStorage {
     const assignment: InsertCandidateJobAssignment = {
       candidateId,
       jobId,
-      status: "submitted",
+      status: "sourced",
       notes: "",
       createdAt: now,
       updatedAt: now,
     };
     const rows = await db.insert(candidateJobAssignments).values(assignment).returning();
     await db.update(jobs).set({ candidateCount: sql`${jobs.candidateCount} + 1` as any }).where(eq(jobs.id, jobId));
+    return rows[0];
+  }
+  async updateCandidateJobStatus(candidateId: number, jobId: number, status: string) {
+    const now = new Date().toISOString();
+    const rows = await db
+      .update(candidateJobAssignments)
+      .set({ status, updatedAt: now })
+      .where(and(eq(candidateJobAssignments.candidateId, candidateId), eq(candidateJobAssignments.jobId, jobId)))
+      .returning();
     return rows[0];
   }
   async removeCandidateFromJob(candidateId: number, jobId: number) {
