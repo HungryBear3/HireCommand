@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -47,6 +57,9 @@ interface Candidate {
   name: string;
   title: string;
   company: string;
+  email?: string;
+  phone?: string;
+  linkedin?: string;
   searchId: string;
   stage: PipelineStage;
   lastAction: string;
@@ -91,6 +104,64 @@ interface Client {
   activity: ActivityItem[];
   notes: ClientNote[];
 }
+
+interface ApiJob {
+  id: number;
+  loxoId?: number | null;
+  title: string;
+  company: string;
+  location: string;
+  stage: string;
+  candidateCount: number;
+  daysOpen: number;
+  description?: string;
+  requirements?: string;
+}
+
+interface ApiCandidate {
+  id: number;
+  name: string;
+  title: string;
+  company: string;
+  location: string;
+  email: string;
+  phone: string;
+  linkedin: string;
+  status: string;
+  lastContact: string;
+  notes: string;
+  timeline: string;
+}
+
+interface ApiClientContact {
+  id: number;
+  loxoId?: number | null;
+  name: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  location: string;
+}
+
+type ShareOptionKey =
+  | "searchSummary"
+  | "candidateNames"
+  | "candidateTitles"
+  | "candidateCompanies"
+  | "candidateContactInfo"
+  | "activityTimeline"
+  | "internalNotes";
+
+const SHARE_OPTIONS: Array<{ key: ShareOptionKey; label: string; description: string }> = [
+  { key: "searchSummary", label: "Search summary", description: "Open roles, owners, health, and stage counts" },
+  { key: "candidateNames", label: "Candidate names", description: "Full candidate names in the portal" },
+  { key: "candidateTitles", label: "Candidate titles", description: "Current/most recent title" },
+  { key: "candidateCompanies", label: "Candidate companies", description: "Current/most recent employer" },
+  { key: "candidateContactInfo", label: "Candidate contact info", description: "Email, phone, and LinkedIn links" },
+  { key: "activityTimeline", label: "Activity timeline", description: "Recent outreach, submittals, and interview activity" },
+  { key: "internalNotes", label: "Internal notes", description: "Recruiter notes and client feedback" },
+];
 
 // ─── Sample Data ──────────────────────────────────────────────────────────────
 
@@ -906,6 +977,159 @@ const CLIENTS: Client[] = [
   },
 ];
 
+function parseTimeline(raw: string | undefined): Array<{ date?: string; event?: string; note?: string }> {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function titleCaseStage(stage: string | undefined): PipelineStage {
+  const normalized = (stage || "sourcing").toLowerCase();
+  if (normalized.includes("screen")) return "Screening";
+  if (normalized.includes("interview")) return "Interview";
+  if (normalized.includes("offer")) return "Offer";
+  if (normalized.includes("placed")) return "Placed";
+  return "Sourcing";
+}
+
+function formatActivityDate(value: string | undefined): string {
+  if (!value) return "Recently";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function companySlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "client";
+}
+
+function buildClientsFromRealData(
+  jobs: ApiJob[],
+  candidates: ApiCandidate[],
+  contacts: ApiClientContact[]
+): Client[] {
+  const byCompany = new Map<string, Client>();
+  const normalize = (name: string) => name.trim().replace(/\s+/g, " ");
+  const ensureClient = (companyName: string): Client | null => {
+    const name = normalize(companyName);
+    if (!name || name.toLowerCase() === "unknown" || name.toLowerCase() === "unknown company") return null;
+    const key = name.toLowerCase();
+    if (!byCompany.has(key)) {
+      byCompany.set(key, {
+        id: companySlug(name),
+        name,
+        sponsor: "Loxo CRM",
+        slug: companySlug(name),
+        lastActivity: "Synced from Loxo",
+        searches: [],
+        candidates: [],
+        activity: [],
+        notes: [],
+      });
+    }
+    return byCompany.get(key) ?? null;
+  };
+
+  for (const contact of contacts) {
+    const client = ensureClient(contact.company || contact.name);
+    if (!client) continue;
+    if (contact.company) client.sponsor = `Contact: ${contact.name}${contact.title ? `, ${contact.title}` : ""}`;
+  }
+
+  for (const job of jobs) {
+    if (job.stage === "closed") continue;
+    const client = ensureClient(job.company);
+    if (!client) continue;
+    const stage = titleCaseStage(job.stage);
+    const stageCounts: Record<PipelineStage, number> = {
+      Sourcing: 0,
+      Screening: 0,
+      Interview: 0,
+      Offer: 0,
+      Placed: 0,
+    };
+    stageCounts[stage] = Math.max(1, job.candidateCount || 1);
+    client.searches.push({
+      id: String(job.id),
+      title: job.title,
+      openDate: `${job.daysOpen || 0} days open`,
+      daysOpen: job.daysOpen || 0,
+      owner: "THA",
+      health: job.daysOpen > 60 ? "At Risk" : "Healthy",
+      atRiskReason: job.daysOpen > 60 ? `Open ${job.daysOpen} days` : undefined,
+      stageCounts,
+    });
+  }
+
+  for (const candidate of candidates) {
+    const matchingJob = jobs.find((job) => job.company.toLowerCase() === candidate.company.toLowerCase() && job.stage !== "closed");
+    const client = matchingJob ? ensureClient(matchingJob.company) : ensureClient(candidate.company);
+    if (!client) continue;
+    const stage = titleCaseStage(candidate.status);
+    const searchId = matchingJob ? String(matchingJob.id) : client.searches[0]?.id || "unassigned";
+    if (searchId === "unassigned") {
+      client.searches.push({
+        id: "unassigned",
+        title: "Candidate Pipeline",
+        openDate: "Synced from Loxo",
+        daysOpen: 0,
+        owner: "THA",
+        health: "Healthy",
+        stageCounts: { Sourcing: 0, Screening: 0, Interview: 0, Offer: 0, Placed: 0 },
+      });
+    }
+    client.candidates.push({
+      id: String(candidate.id),
+      name: candidate.name,
+      title: candidate.title,
+      company: candidate.company,
+      email: candidate.email,
+      phone: candidate.phone,
+      linkedin: candidate.linkedin,
+      searchId,
+      stage,
+      lastAction: candidate.notes?.slice(0, 80) || "Synced from Loxo",
+      lastActionDate: formatActivityDate(candidate.lastContact),
+      health: candidate.status?.toLowerCase().includes("stalled") ? "Stalled" : "Healthy",
+    });
+    const timeline = parseTimeline(candidate.timeline);
+    const latest = timeline[0];
+    client.activity.push({
+      id: `candidate-${candidate.id}`,
+      date: formatActivityDate(latest?.date || candidate.lastContact),
+      type: stage === "Interview" ? "interview" : stage === "Screening" ? "call" : "note",
+      description: latest?.note || latest?.event || `${candidate.name} updated in ${stage}`,
+      person: "THA",
+    });
+  }
+
+  for (const client of Array.from(byCompany.values())) {
+    if (client.searches.length === 0 && client.candidates.length === 0) continue;
+    const latestCandidate = client.candidates[0];
+    client.lastActivity = latestCandidate?.lastActionDate || client.activity[0]?.date || "Synced from Loxo";
+    for (const search of client.searches) {
+      const related: Candidate[] = client.candidates.filter((candidate: Candidate) => candidate.searchId === search.id);
+      if (related.length > 0) {
+        search.stageCounts = {
+          Sourcing: related.filter((candidate: Candidate) => candidate.stage === "Sourcing").length,
+          Screening: related.filter((candidate: Candidate) => candidate.stage === "Screening").length,
+          Interview: related.filter((candidate: Candidate) => candidate.stage === "Interview").length,
+          Offer: related.filter((candidate: Candidate) => candidate.stage === "Offer").length,
+          Placed: related.filter((candidate: Candidate) => candidate.stage === "Placed").length,
+        };
+      }
+    }
+  }
+
+  return Array.from(byCompany.values())
+    .filter((client) => client.searches.length > 0 || client.candidates.length > 0)
+    .sort((a, b) => b.searches.length - a.searches.length || a.name.localeCompare(b.name));
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getOverallHealth(searches: Search[]): HealthStatus {
@@ -1081,18 +1305,45 @@ function SearchCard({ search }: { search: Search }) {
 
 export default function ClientPortal() {
   const { toast } = useToast();
-  const [selectedClientId, setSelectedClientId] = useState<string>("1");
+  const [selectedClientId, setSelectedClientId] = useState<string>("");
+  const [selectedContactId, setSelectedContactId] = useState<string>("");
+  const [shareOptions, setShareOptions] = useState<Record<ShareOptionKey, boolean>>({
+    searchSummary: true,
+    candidateNames: true,
+    candidateTitles: true,
+    candidateCompanies: false,
+    candidateContactInfo: false,
+    activityTimeline: true,
+    internalNotes: false,
+  });
   const [clientSearch, setClientSearch] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
   const [newNote, setNewNote] = useState("");
 
-  const filteredClients = CLIENTS.filter(
+  const { data: apiJobs = [] } = useQuery<ApiJob[]>({ queryKey: ["/api/jobs"] });
+  const { data: apiCandidates = [] } = useQuery<ApiCandidate[]>({ queryKey: ["/api/candidates"] });
+  const { data: apiContacts = [] } = useQuery<ApiClientContact[]>({ queryKey: ["/api/clients"] });
+
+  const realClients = useMemo(
+    () => buildClientsFromRealData(apiJobs, apiCandidates, apiContacts),
+    [apiJobs, apiCandidates, apiContacts]
+  );
+  const clients = realClients.length > 0 ? realClients : CLIENTS;
+  const activeClientId = selectedClientId || clients[0]?.id || "";
+
+  const filteredClients = clients.filter(
     (c) =>
       c.name.toLowerCase().includes(clientSearch.toLowerCase()) ||
       c.sponsor.toLowerCase().includes(clientSearch.toLowerCase())
   );
 
-  const client = CLIENTS.find((c) => c.id === selectedClientId) ?? CLIENTS[0];
+  const client = clients.find((c) => c.id === activeClientId) ?? clients[0] ?? CLIENTS[0];
+  const companyContacts = apiContacts.filter((contact) => {
+    const company = (contact.company || contact.name || "").toLowerCase();
+    if (!company) return false;
+    return company === client.name.toLowerCase() || company.includes(client.name.toLowerCase()) || client.name.toLowerCase().includes(company);
+  });
+  const selectedContact = companyContacts.find((contact) => String(contact.id) === selectedContactId) ?? companyContacts[0];
   const overallHealth = getOverallHealth(client.searches);
 
   const totalCandidates = client.candidates.length;
@@ -1107,16 +1358,18 @@ export default function ClientPortal() {
 
   function handleSharePortal() {
     const url = `portal.hirecommand.app/client/${client.slug}`;
+    const sharedSections = SHARE_OPTIONS.filter((option) => shareOptions[option.key]).map((option) => option.label);
     toast({
       title: "Client portal link copied",
-      description: url,
+      description: `${selectedContact?.name ? `For ${selectedContact.name}: ` : ""}${url} · Sharing ${sharedSections.length} section${sharedSections.length === 1 ? "" : "s"}`,
     });
   }
 
   function handleSendUpdate() {
+    const recipient = selectedContact?.name || `${client.name} contacts`;
     toast({
       title: "Update sent",
-      description: `Weekly status update dispatched to ${client.name} contacts.`,
+      description: `Weekly status update dispatched to ${recipient}.`,
     });
   }
 
@@ -1131,7 +1384,12 @@ export default function ClientPortal() {
 
   function handleSelectClient(id: string) {
     setSelectedClientId(id);
+    setSelectedContactId("");
     setActiveTab("overview");
+  }
+
+  function toggleShareOption(key: ShareOptionKey, checked: boolean | "indeterminate") {
+    setShareOptions((current) => ({ ...current, [key]: checked === true }));
   }
 
   return (
@@ -1244,6 +1502,7 @@ export default function ClientPortal() {
               <p className="text-xs text-muted-foreground">
                 {client.sponsor} · {client.searches.length} active{" "}
                 {client.searches.length === 1 ? "search" : "searches"}
+                {realClients.length > 0 ? " · Live Loxo data" : " · Demo fallback"}
               </p>
             </div>
           </div>
@@ -1346,6 +1605,61 @@ export default function ClientPortal() {
                 </Card>
               </div>
 
+              <Card className="border border-card-border" data-testid="card-share-settings">
+                <CardHeader className="pb-2 pt-4 px-4">
+                  <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+                    <Share2 size={14} className="text-muted-foreground" />
+                    Portal Sharing Controls
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 pb-4 space-y-4">
+                  <div className="grid lg:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Share with company contact</Label>
+                      <Select
+                        value={selectedContact ? String(selectedContact.id) : "none"}
+                        onValueChange={(value) => setSelectedContactId(value === "none" ? "" : value)}
+                      >
+                        <SelectTrigger className="h-9 text-xs" data-testid="select-portal-contact">
+                          <SelectValue placeholder="Select a contact" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {companyContacts.length === 0 && (
+                            <SelectItem value="none">No Loxo contact found</SelectItem>
+                          )}
+                          {companyContacts.map((contact) => (
+                            <SelectItem key={contact.id} value={String(contact.id)}>
+                              {contact.name}{contact.title ? ` — ${contact.title}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">
+                        {selectedContact?.email || selectedContact?.phone || "Pulled from synced Loxo clients/contacts."}
+                      </p>
+                    </div>
+                    <div className="lg:col-span-2 grid sm:grid-cols-2 gap-3">
+                      {SHARE_OPTIONS.map((option) => (
+                        <div key={option.key} className="flex items-start gap-2 rounded-lg border border-border/70 p-2.5">
+                          <Checkbox
+                            id={`share-${option.key}`}
+                            checked={shareOptions[option.key]}
+                            onCheckedChange={(checked) => toggleShareOption(option.key, checked)}
+                            data-testid={`checkbox-share-${option.key}`}
+                          />
+                          <div className="grid gap-0.5 leading-none">
+                            <Label htmlFor={`share-${option.key}`} className="text-xs font-medium cursor-pointer">
+                              {option.label}
+                            </Label>
+                            <p className="text-[10px] leading-snug text-muted-foreground">{option.description}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
               <div className="grid lg:grid-cols-3 gap-4">
                 {/* Deal Health Summary */}
                 <Card className="border border-card-border" data-testid="card-deal-health">
@@ -1404,7 +1718,10 @@ export default function ClientPortal() {
                     </Button>
                   </CardHeader>
                   <CardContent className="px-4 pb-4 space-y-0">
-                    {client.activity.slice(0, 5).map((item, idx) => {
+                    {!shareOptions.activityTimeline && (
+                      <p className="text-xs text-muted-foreground py-3">Activity timeline is hidden from this portal share.</p>
+                    )}
+                    {shareOptions.activityTimeline && client.activity.slice(0, 5).map((item, idx) => {
                       const Icon = ACTIVITY_ICONS[item.type];
                       return (
                         <div key={item.id}>
@@ -1456,6 +1773,7 @@ export default function ClientPortal() {
                 </CardHeader>
                 <CardContent className="px-4 pb-4 space-y-3">
                   {client.notes.map((note) => (
+                    shareOptions.internalNotes ? (
                     <div
                       key={note.id}
                       className="bg-muted/40 rounded-lg p-3 space-y-1.5"
@@ -1477,7 +1795,13 @@ export default function ClientPortal() {
                         {note.text}
                       </p>
                     </div>
+                    ) : null
                   ))}
+                  {!shareOptions.internalNotes && (
+                    <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg p-3">
+                      Internal notes are hidden from this portal share.
+                    </p>
+                  )}
                   <div className="flex gap-2 pt-1">
                     <Input
                       data-testid="input-new-note"
@@ -1510,7 +1834,10 @@ export default function ClientPortal() {
                 </h2>
               </div>
               <div className="space-y-4">
-                {client.searches.map((search) => (
+                {!shareOptions.searchSummary && (
+                  <Card className="border border-card-border"><CardContent className="p-4 text-xs text-muted-foreground">Search summaries are hidden from this portal share.</CardContent></Card>
+                )}
+                {shareOptions.searchSummary && client.searches.map((search) => (
                   <SearchCard key={search.id} search={search} />
                 ))}
               </div>
@@ -1532,6 +1859,11 @@ export default function ClientPortal() {
                         <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">
                           Current Company
                         </th>
+                        {shareOptions.candidateContactInfo && (
+                          <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">
+                            Contact Info
+                          </th>
+                        )}
                         <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">
                           Search
                         </th>
@@ -1571,16 +1903,28 @@ export default function ClientPortal() {
                                   </AvatarFallback>
                                 </Avatar>
                                 <div>
-                                  <p className="font-medium">{candidate.name}</p>
+                                  <p className="font-medium">
+                                    {shareOptions.candidateNames ? candidate.name : `Candidate ${idx + 1}`}
+                                  </p>
                                   <p className="text-[10px] text-muted-foreground">
-                                    {candidate.title}
+                                    {shareOptions.candidateTitles ? candidate.title : "Title hidden"}
                                   </p>
                                 </div>
                               </div>
                             </td>
                             <td className="px-4 py-3 text-muted-foreground">
-                              {candidate.company}
+                              {shareOptions.candidateCompanies ? candidate.company : "Hidden"}
                             </td>
+                            {shareOptions.candidateContactInfo && (
+                              <td className="px-4 py-3 text-muted-foreground">
+                                <div className="space-y-0.5">
+                                  {candidate.email && <div>{candidate.email}</div>}
+                                  {candidate.phone && <div>{candidate.phone}</div>}
+                                  {candidate.linkedin && <div className="truncate max-w-40">{candidate.linkedin}</div>}
+                                  {!candidate.email && !candidate.phone && !candidate.linkedin && <div>—</div>}
+                                </div>
+                              </td>
+                            )}
                             <td className="px-4 py-3 text-muted-foreground">
                               {search?.title ?? "—"}
                             </td>
@@ -1623,6 +1967,10 @@ export default function ClientPortal() {
               <h2 className="text-sm font-semibold text-foreground">
                 Activity Timeline ({client.activity.length} items)
               </h2>
+              {!shareOptions.activityTimeline && (
+                <Card className="border border-card-border"><CardContent className="p-4 text-xs text-muted-foreground">Activity timeline is hidden from this portal share.</CardContent></Card>
+              )}
+              {shareOptions.activityTimeline && (
               <div className="relative">
                 {/* Timeline line */}
                 <div className="absolute left-[19px] top-0 bottom-0 w-px bg-border" />
@@ -1684,6 +2032,7 @@ export default function ClientPortal() {
                   )}
                 </div>
               </div>
+              )}
             </TabsContent>
           </ScrollArea>
         </Tabs>
