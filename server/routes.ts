@@ -258,6 +258,14 @@ export async function registerRoutes(
     res.json(data);
   });
 
+  app.get("/api/jobs/:id/candidates", async (req, res) => {
+    const jobId = Number(req.params.id);
+    const job = await storage.getJob(jobId);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    const data = await storage.getCandidatesForJob(jobId);
+    res.json(data);
+  });
+
   app.post("/api/jobs", async (req, res) => {
     const parsed = insertJobSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });

@@ -94,6 +94,7 @@ export interface IStorage {
   updateCandidate(id: number, c: Partial<InsertCandidate>): Promise<Candidate | undefined>;
   deleteCandidate(id: number): Promise<void>;
   getCandidateJobs(candidateId: number): Promise<Job[]>;
+  getCandidatesForJob(jobId: number): Promise<Candidate[]>;
   addCandidateToJob(candidateId: number, jobId: number): Promise<CandidateJobAssignment>;
   removeCandidateFromJob(candidateId: number, jobId: number): Promise<void>;
   getJobs(): Promise<Job[]>;
@@ -201,6 +202,14 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(jobs, eq(candidateJobAssignments.jobId, jobs.id))
       .where(eq(candidateJobAssignments.candidateId, candidateId));
     return rows.map((row) => row.job);
+  }
+  async getCandidatesForJob(jobId: number) {
+    const rows = await db
+      .select({ candidate: candidates })
+      .from(candidateJobAssignments)
+      .innerJoin(candidates, eq(candidateJobAssignments.candidateId, candidates.id))
+      .where(eq(candidateJobAssignments.jobId, jobId));
+    return rows.map((row) => row.candidate);
   }
   async addCandidateToJob(candidateId: number, jobId: number) {
     const now = new Date().toISOString();

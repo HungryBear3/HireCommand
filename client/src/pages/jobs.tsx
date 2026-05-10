@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Job } from "@shared/schema";
+import type { Candidate, Invoice, Job } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2, Archive, RotateCcw, CheckSquare } from "lucide-react";
+import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2, Archive, RotateCcw, CheckSquare, FileText } from "lucide-react";
 
 const ACTIVE_STAGES = [
   { key: "intake",     label: "Intake",     color: "bg-slate-400" },
@@ -53,6 +53,39 @@ function formToPayload(form: JobForm, existing?: Job) {
     candidateCount: existing?.candidateCount ?? 0,
     daysOpen: existing?.daysOpen ?? 0,
   };
+}
+
+type ApiClientContact = {
+  id: number;
+  name: string;
+  company: string;
+  email?: string;
+  location?: string;
+};
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDays(date: string, days: number) {
+  const d = new Date(`${date}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function parseCurrency(value?: string | number | null) {
+  if (typeof value === "number") return value;
+  const parsed = parseFloat(String(value || "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function nextInvoiceNumber(invoices: Invoice[]) {
+  const year = new Date().getFullYear();
+  const max = invoices.reduce((highest, invoice) => {
+    const match = invoice.invoiceNumber?.match(/(\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+  return `INV-${year}-${String(max + 1).padStart(4, "0")}`;
 }
 
 function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
@@ -148,6 +181,237 @@ function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
   );
 }
 
+function PlacementInvoiceDialog({ job, open, onClose }: { job: Job | null; open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data: jobCandidates = [] } = useQuery<Candidate[]>({
+    queryKey: ["/api/jobs", job?.id, "candidates"],
+    queryFn: async () => {
+      if (!job) return [];
+      const r = await apiRequest("GET", `/api/jobs/${job.id}/candidates`);
+      return r.json();
+    },
+    enabled: open && !!job,
+  });
+  const { data: allCandidates = [] } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"], enabled: open });
+  const { data: clients = [] } = useQuery<ApiClientContact[]>({ queryKey: ["/api/clients"], enabled: open });
+  const { data: invoices = [] } = useQuery<Invoice[]>({ queryKey: ["/api/invoices"], enabled: open });
+
+  const candidateOptions = jobCandidates.length ? jobCandidates : allCandidates;
+  const [candidateId, setCandidateId] = useState("");
+  const [candidateName, setCandidateName] = useState("");
+  const [clientName, setClientName] = useState("");
+  const [clientEmail, setClientEmail] = useState("");
+  const [clientAddress, setClientAddress] = useState("");
+  const [salary, setSalary] = useState("");
+  const [feePercent, setFeePercent] = useState("25");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [issueDate, setIssueDate] = useState(today());
+  const [dueDate, setDueDate] = useState(addDays(today(), 30));
+  const [terms, setTerms] = useState("Net 30");
+  const [leadRecruiter, setLeadRecruiter] = useState("Andrew");
+  const [notes, setNotes] = useState("");
+
+  const matchingClient = useMemo(() => {
+    const company = job?.company?.toLowerCase().trim();
+    if (!company) return undefined;
+    return clients.find((client) => client.company?.toLowerCase().trim() === company || client.name?.toLowerCase().trim() === company);
+  }, [clients, job?.company]);
+
+  useEffect(() => {
+    if (!open || !job) return;
+    const firstCandidate = jobCandidates[0];
+    setCandidateId(firstCandidate ? String(firstCandidate.id) : "");
+    setCandidateName(firstCandidate?.name || "");
+    setClientName(job.company || "");
+    setClientEmail(matchingClient?.email || "");
+    setClientAddress(matchingClient?.location || job.location || "");
+    setSalary("");
+    setFeePercent("25");
+    setInvoiceNumber(nextInvoiceNumber(invoices));
+    setIssueDate(today());
+    setDueDate(addDays(today(), 30));
+    setTerms("Net 30");
+    setLeadRecruiter("Andrew");
+    setNotes(`Placement invoice for ${job.title} at ${job.company}.`);
+  }, [open, job, jobCandidates, matchingClient, invoices]);
+
+  const feeAmount = Math.round((parseCurrency(salary) * (parseFloat(feePercent) || 0)) / 100);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!job) throw new Error("No job selected");
+      if (!clientName.trim()) throw new Error("Client name is required");
+      if (!candidateName.trim()) throw new Error("Candidate name is required");
+      if (feeAmount <= 0) throw new Error("Salary and fee percent must produce an invoice amount");
+      const now = new Date().toISOString();
+      const selectedCandidateId = candidateId ? Number(candidateId) : null;
+
+      const placementPayload = {
+        jobTitle: job.title,
+        company: job.company,
+        clientName: clientName.trim(),
+        candidateName: candidateName.trim(),
+        candidateId: selectedCandidateId,
+        salary: parseCurrency(salary),
+        feePercent: parseFloat(feePercent) || 0,
+        feeAmount,
+        invoiceStatus: "pending",
+        placedDate: issueDate,
+        startDate: "",
+        guaranteeDays: 90,
+        notes: notes.trim(),
+        leadRecruiter,
+      };
+      const placementRes = await apiRequest("POST", "/api/placements", placementPayload);
+      const placement = await placementRes.json();
+
+      const invoicePayload = {
+        invoiceNumber: invoiceNumber.trim() || nextInvoiceNumber(invoices),
+        status: "draft",
+        clientName: clientName.trim(),
+        clientEmail: clientEmail.trim(),
+        clientAddress: clientAddress.trim(),
+        candidateName: candidateName.trim(),
+        jobTitle: job.title,
+        salary: parseCurrency(salary),
+        feePercent: parseFloat(feePercent) || 0,
+        subtotal: feeAmount,
+        taxPercent: 0,
+        taxAmount: 0,
+        total: feeAmount,
+        amountPaid: 0,
+        amountDue: feeAmount,
+        lineItems: JSON.stringify([{ description: `Executive Search Fee — ${job.title}`, quantity: 1, unitPrice: feeAmount, amount: feeAmount }]),
+        issueDate,
+        dueDate,
+        notes: notes.trim(),
+        terms,
+        placementId: placement.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const invoiceRes = await apiRequest("POST", "/api/invoices", invoicePayload);
+      const invoice = await invoiceRes.json();
+
+      await Promise.all([
+        apiRequest("PATCH", `/api/jobs/${job.id}`, { stage: "placed" }),
+        selectedCandidateId ? apiRequest("PATCH", `/api/candidates/${selectedCandidateId}`, { status: "placed" }) : Promise.resolve(),
+      ]);
+
+      return invoice;
+    },
+    onSuccess: (invoice) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/candidates"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/placements"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Placement invoice created", description: `${invoice.invoiceNumber} is now in the Invoices tab.` });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Invoice setup failed", description: e.message, variant: "destructive" }),
+  });
+
+  if (!job) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Create placement invoice</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 mt-2">
+          <div className="rounded-lg border border-card-border bg-muted/30 p-3 text-sm">
+            <p className="font-medium">{job.title}</p>
+            <p className="text-muted-foreground">{job.company}{job.location ? ` · ${job.location}` : ""}</p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Placed Candidate *</Label>
+              <select
+                value={candidateId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setCandidateId(id);
+                  const candidate = candidateOptions.find((c) => String(c.id) === id);
+                  setCandidateName(candidate?.name || "");
+                }}
+                className="w-full h-9 text-sm rounded-md border border-input bg-background px-3"
+              >
+                <option value="">Manual entry</option>
+                {candidateOptions.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} — {candidate.title || candidate.company}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Candidate Name *</Label>
+              <Input value={candidateName} onChange={(e) => setCandidateName(e.target.value)} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Client Name *</Label>
+              <Input value={clientName} onChange={(e) => setClientName(e.target.value)} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Client Email</Label>
+              <Input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label className="text-xs">Client Address</Label>
+              <Input value={clientAddress} onChange={(e) => setClientAddress(e.target.value)} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Salary *</Label>
+              <Input value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="175000" className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Fee % *</Label>
+              <Input value={feePercent} onChange={(e) => setFeePercent(e.target.value)} placeholder="25" className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Invoice #</Label>
+              <Input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Lead Recruiter</Label>
+              <select value={leadRecruiter} onChange={(e) => setLeadRecruiter(e.target.value)} className="w-full h-9 text-sm rounded-md border border-input bg-background px-3">
+                {['Andrew', 'Ryan', 'Aileen'].map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Issue / Placed Date</Label>
+              <Input type="date" value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDueDate(addDays(e.target.value, 30)); }} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Due Date</Label>
+              <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label className="text-xs">Notes</Label>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full h-20 text-sm rounded-md border border-input bg-background px-3 py-2 resize-none" />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Draft invoice total</p>
+              <p className="text-xs text-muted-foreground">Creates a placement record, marks the job/candidate placed, and saves a draft invoice.</p>
+            </div>
+            <p className="text-xl font-bold">${feeAmount.toLocaleString()}</p>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+            <Button type="button" size="sm" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
+              {saveMutation.isPending ? <Loader2 size={13} className="animate-spin mr-1" /> : <FileText size={13} className="mr-1" />}
+              Create Invoice
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Jobs() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -155,6 +419,7 @@ export default function Jobs() {
   const [showClosed, setShowClosed] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
+  const [placementInvoiceJob, setPlacementInvoiceJob] = useState<Job | null>(null);
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const activeJobs = jobs.filter(job => job.stage !== "closed");
@@ -206,6 +471,14 @@ export default function Jobs() {
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  const handleStageChange = (job: Job, stage: string) => {
+    if (stage === "placed" && job.stage !== "placed") {
+      setPlacementInvoiceJob(job);
+      return;
+    }
+    stageMutation.mutate({ id: job.id, stage });
+  };
 
   const bulkCloseMutation = useMutation({
     mutationFn: async (ids: number[]) => {
@@ -412,7 +685,7 @@ export default function Jobs() {
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Stage</p>
                   <div className="flex flex-wrap gap-1.5">
                     {STAGES.map(s => (
-                      <button key={s.key} onClick={() => stageMutation.mutate({ id: selectedJob.id, stage: s.key })}
+                      <button key={s.key} onClick={() => handleStageChange(selectedJob, s.key)}
                         className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${selectedJob.stage === s.key ? "bg-primary text-white" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}>
                         {s.label}
                       </button>
@@ -444,6 +717,11 @@ export default function Jobs() {
                 )}
 
                 <div className="flex gap-2 pt-2">
+                  {selectedJob.stage !== "placed" && selectedJob.stage !== "closed" && (
+                    <Button size="sm" className="gap-1.5" onClick={() => setPlacementInvoiceJob(selectedJob)}>
+                      <FileText size={13} /> Mark Placed
+                    </Button>
+                  )}
                   <JobFormDialog
                     dialogTitle="Edit Job"
                     initial={jobToForm(selectedJob)}
@@ -475,6 +753,12 @@ export default function Jobs() {
           })()}
         </SheetContent>
       </Sheet>
+
+      <PlacementInvoiceDialog
+        job={placementInvoiceJob}
+        open={!!placementInvoiceJob}
+        onClose={() => setPlacementInvoiceJob(null)}
+      />
     </div>
   );
 }
