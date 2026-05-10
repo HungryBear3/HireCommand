@@ -164,6 +164,74 @@ export async function registerRoutes(
     res.json(data);
   });
 
+  app.get("/api/companies", async (_req, res) => {
+    const [allJobs, allCandidates] = await Promise.all([storage.getJobs(), storage.getCandidates()]);
+    const companyMap = new Map<string, any>();
+
+    const normalize = (name: string) => name.trim().replace(/\s+/g, " ");
+    const upsert = (name: string, seed: Partial<any> = {}) => {
+      const normalized = normalize(name);
+      if (!normalized || normalized.toLowerCase() === "unknown" || normalized.toLowerCase() === "unknown company") return null;
+      const key = normalized.toLowerCase();
+      if (!companyMap.has(key)) {
+        companyMap.set(key, {
+          id: key.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || String(companyMap.size + 1),
+          name: normalized,
+          sector: "Loxo CRM",
+          peSponsor: "Imported from Loxo",
+          revenue: "TBD",
+          headcount: 0,
+          headcountChange: 0,
+          leadershipGaps: [],
+          recentHires: [],
+          recentDepartures: [],
+          fundingStage: "Unknown",
+          lastFunding: "Unknown",
+          signals: [] as string[],
+          momentum: "stable",
+          location: seed.location || "",
+          openJobs: 0,
+          candidateCount: 0,
+          loxoJobIds: [] as number[],
+        });
+      }
+      return companyMap.get(key);
+    };
+
+    for (const job of allJobs) {
+      const company = upsert(job.company, { location: job.location });
+      if (!company) continue;
+      company.openJobs += job.stage !== "closed" ? 1 : 0;
+      if (job.loxoId) company.loxoJobIds.push(job.loxoId);
+      if (!company.location && job.location) company.location = job.location;
+      if (job.stage !== "closed") {
+        company.leadershipGaps.push(job.title);
+        if (!company.signals.includes("hiring")) company.signals.push("hiring");
+      }
+    }
+
+    for (const candidate of allCandidates) {
+      const company = upsert(candidate.company, { location: candidate.location });
+      if (!company) continue;
+      company.candidateCount += 1;
+      company.headcount = company.candidateCount;
+      if (!company.location && candidate.location) company.location = candidate.location;
+    }
+
+    const companies = Array.from(companyMap.values())
+      .map((company) => ({
+        ...company,
+        leadershipGaps: company.leadershipGaps.slice(0, 5),
+        momentum: company.openJobs >= 2 ? "accelerating" : company.openJobs === 0 ? "stable" : "stable",
+        headcountChange: company.openJobs > 0 ? Math.min(25, company.openJobs * 5) : 0,
+        signals: company.signals.length ? company.signals : ["growth"],
+        peSponsor: company.openJobs > 0 ? `${company.openJobs} open Loxo search${company.openJobs === 1 ? "" : "es"}` : "Imported from Loxo",
+      }))
+      .sort((a, b) => (b.openJobs - a.openJobs) || (b.candidateCount - a.candidateCount) || a.name.localeCompare(b.name));
+
+    res.json(companies);
+  });
+
   app.get("/api/jobs/:id", async (req, res) => {
     const data = await storage.getJob(Number(req.params.id));
     if (!data) return res.status(404).json({ error: "Not found" });

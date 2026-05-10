@@ -143,7 +143,7 @@ export async function sourceCandidatesForJob(job: typeof jobs.$inferSelect, max 
   const fallbackMatches = heuristicMatchesForJob(job, allCandidates, max);
   let matches = fallbackMatches;
 
-  if (hasAnthropicApiKey()) {
+  if (await hasAnthropicApiKey()) {
     try {
       const reqs = parseRequirements(job.requirements).join(", ");
       const shortlist = fallbackMatches.length > 0
@@ -311,15 +311,37 @@ Selection rules:
 }
 
 export function registerRediscoveryRoutes(app: Express) {
-  app.get("/api/rediscovery/status", (_req, res) => {
+  app.get("/api/rediscovery/status", async (_req, res) => {
     res.json({
       isRunning,
       hasResults: !!latestResults,
       generatedAt: latestResults?.generatedAt ?? null,
       candidatesAnalyzed: latestResults?.candidatesAnalyzed ?? 0,
       error: latestError,
-      hasAnthropicApiKey: hasAnthropicApiKey(),
+      hasAnthropicApiKey: await hasAnthropicApiKey(),
     });
+  });
+
+  app.get("/api/rediscovery/settings", async (_req, res) => {
+    const { storage } = await import("./storage");
+    const key = await storage.getSetting("anthropic_api_key");
+    const envConfigured = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY || process.env.CLAUDE_API_KEY);
+    res.json({
+      anthropicApiKeySet: envConfigured || !!key,
+      anthropicApiKey: key ? `${key.slice(0, 8)}${"•".repeat(Math.max(0, key.length - 8))}` : "",
+      envConfigured,
+    });
+  });
+
+  app.post("/api/rediscovery/settings", async (req, res) => {
+    const { storage } = await import("./storage");
+    const { anthropicApiKey } = req.body as { anthropicApiKey?: string };
+    if (anthropicApiKey !== undefined) {
+      if (anthropicApiKey.trim()) await storage.setSetting("anthropic_api_key", anthropicApiKey.trim());
+      else await storage.deleteSetting("anthropic_api_key");
+    }
+    latestError = null;
+    res.json({ ok: true, anthropicApiKeySet: await hasAnthropicApiKey() });
   });
 
   app.get("/api/rediscovery/results", (_req, res) => {

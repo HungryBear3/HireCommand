@@ -328,7 +328,7 @@ export default function TalentRediscovery() {
             <div className="mt-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/10 px-4 py-3 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
               <AlertCircle size={13} className="shrink-0 mt-0.5" />
               <span>
-                <strong>Anthropic API key required.</strong> Set ANTHROPIC_API_KEY, ANTHROPIC_KEY, or CLAUDE_API_KEY in Render environment variables to enable AI analysis.
+                <strong>Anthropic API key required.</strong> Save it under Settings → Rediscovery AI, or set ANTHROPIC_API_KEY, ANTHROPIC_KEY, or CLAUDE_API_KEY in Render environment variables.
               </span>
             </div>
           )}

@@ -1,10 +1,19 @@
 // Shared Claude API helper for all AI features
-export function getAnthropicApiKey() {
-  return process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY || process.env.CLAUDE_API_KEY || "";
+export async function getAnthropicApiKey() {
+  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY || process.env.CLAUDE_API_KEY) {
+    return process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY || process.env.CLAUDE_API_KEY || "";
+  }
+
+  try {
+    const { storage } = await import("./storage");
+    return await storage.getSetting("anthropic_api_key") || "";
+  } catch {
+    return "";
+  }
 }
 
-export function hasAnthropicApiKey() {
-  return !!getAnthropicApiKey();
+export async function hasAnthropicApiKey() {
+  return !!(await getAnthropicApiKey());
 }
 
 export async function callClaude(
@@ -12,7 +21,7 @@ export async function callClaude(
   system = "You are an expert executive recruiting assistant for The Hiring Advisors.",
   maxTokens = 1500,
 ): Promise<string> {
-  const key = getAnthropicApiKey();
+  const key = await getAnthropicApiKey();
   if (!key) throw new Error("Anthropic API key not configured — set ANTHROPIC_API_KEY, ANTHROPIC_KEY, or CLAUDE_API_KEY in Render environment variables");
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {

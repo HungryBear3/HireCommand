@@ -43,6 +43,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
 
 // ═══════════════════════════════════════════════════════════════
 // DATA LAYER — All intelligence data used across tabs
@@ -515,15 +516,26 @@ function CompanyIntelTab() {
   const [sectorFilter, setSectorFilter] = useState("all");
   const [selectedCompany, setSelectedCompany] = useState<CompanyIntel | null>(null);
 
-  const sectors = useMemo(() => [...new Set(companies.map(c => c.sector))], []);
+  const { data: loxoCompanies = [], isLoading } = useQuery<CompanyIntel[]>({
+    queryKey: ["/api/companies"],
+    queryFn: async () => {
+      const r = await fetch("/api/companies", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load companies");
+      return r.json();
+    },
+  });
+
+  const companyData = loxoCompanies.length > 0 ? loxoCompanies : companies;
+
+  const sectors = useMemo(() => Array.from(new Set(companyData.map(c => c.sector))), [companyData]);
 
   const filtered = useMemo(() => {
-    return companies.filter(c => {
+    return companyData.filter(c => {
       if (search && !c.name.toLowerCase().includes(search.toLowerCase()) && !c.peSponsor.toLowerCase().includes(search.toLowerCase())) return false;
       if (sectorFilter !== "all" && c.sector !== sectorFilter) return false;
       return true;
     });
-  }, [search, sectorFilter]);
+  }, [companyData, search, sectorFilter]);
 
   const momentumIcon = (m: string) => {
     if (m === "accelerating") return <ArrowUpRight size={12} className="text-green-500" />;
@@ -573,6 +585,11 @@ function CompanyIntelTab() {
       </div>
 
       <div className="grid gap-3">
+        {isLoading && (
+          <div className="rounded-xl border border-border p-6 text-center text-xs text-muted-foreground">
+            <Loader2 size={16} className="mx-auto mb-2 animate-spin" /> Loading companies from Loxo sync data…
+          </div>
+        )}
         {filtered.map(company => (
           <Card
             key={company.id}

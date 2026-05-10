@@ -39,6 +39,7 @@ import {
   Clock,
   AlertCircle,
   Info,
+  Sparkles,
 } from "lucide-react";
 
 const comingSoonIntegrations = [
@@ -151,6 +152,40 @@ export default function Settings() {
       queryClient.invalidateQueries({ queryKey: ["/api/sourcing/config"] });
       setGKey(""); setGCx(""); setPlxKey("");
       toast({ title: "Sourcing API keys saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  interface RediscoverySettings {
+    anthropicApiKeySet: boolean;
+    anthropicApiKey: string;
+    envConfigured: boolean;
+  }
+  const { data: rediscoverySettings, refetch: refetchRediscoverySettings } = useQuery<RediscoverySettings>({
+    queryKey: ["/api/rediscovery/settings"],
+    queryFn: async () => {
+      const r = await fetch("/api/rediscovery/settings", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+  });
+  const [anthropicKey, setAnthropicKey] = useState("");
+  const [showAnthropicKey, setShowAnthropicKey] = useState(false);
+  const saveRediscoveryMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/rediscovery/settings", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anthropicApiKey: anthropicKey }),
+      });
+      if (!r.ok) throw new Error("Failed to save Anthropic API key");
+      return r.json();
+    },
+    onSuccess: () => {
+      refetchRediscoverySettings();
+      queryClient.invalidateQueries({ queryKey: ["/api/rediscovery/status"] });
+      setAnthropicKey("");
+      toast({ title: "Rediscovery API key saved" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1294,6 +1329,68 @@ export default function Settings() {
               <p className="font-medium text-foreground text-xs flex items-center gap-1.5"><Info size={11} /> Setup instructions</p>
               <p><strong>Google CSE:</strong> Create a Custom Search Engine at <code className="bg-muted px-1 rounded">programmablesearchengine.google.com</code>, set it to search the entire web, then get an API key from Google Cloud Console (Custom Search JSON API).</p>
               <p className="mt-1"><strong>Perplexity:</strong> Get an API key from <code className="bg-muted px-1 rounded">perplexity.ai/settings/api</code>. The sonar-pro model is used for best candidate discovery results.</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Rediscovery AI — admin only */}
+      {adminUser && (
+        <Card className="border border-card-border">
+          <CardHeader>
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <Sparkles size={14} />
+              Rediscovery AI
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Save the Anthropic API key used by AI Talent Rediscovery. Env vars still work, but this gives admins a visible in-app setup path.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-sm font-bold text-primary flex-shrink-0">A</div>
+                <div>
+                  <p className="text-sm font-medium">Anthropic Claude</p>
+                  <p className="text-xs text-muted-foreground">Required for Rediscovery analysis</p>
+                </div>
+                <Badge className={`ml-auto text-xs border-0 ${rediscoverySettings?.anthropicApiKeySet ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+                  {rediscoverySettings?.anthropicApiKeySet ? "Configured" : "Not Set"}
+                </Badge>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">
+                  API Key {rediscoverySettings?.anthropicApiKeySet && <span className="text-green-600 dark:text-green-400">(set{rediscoverySettings.envConfigured ? " via environment" : ""})</span>}
+                </Label>
+                <div className="relative">
+                  <Input
+                    type={showAnthropicKey ? "text" : "password"}
+                    placeholder={rediscoverySettings?.anthropicApiKeySet ? "••••••••••••• (update)" : "sk-ant-..."}
+                    value={anthropicKey}
+                    onChange={e => setAnthropicKey(e.target.value)}
+                    className="h-9 text-sm font-mono pr-9"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowAnthropicKey(v => !v)}
+                  >
+                    {showAnthropicKey ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                size="sm"
+                className="gap-1.5 text-xs"
+                disabled={!anthropicKey || saveRediscoveryMutation.isPending}
+                onClick={() => saveRediscoveryMutation.mutate()}
+              >
+                {saveRediscoveryMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : null}
+                Save Anthropic Key
+              </Button>
+              <p className="text-[11px] text-muted-foreground">Leave blank to keep the existing key.</p>
             </div>
           </CardContent>
         </Card>
