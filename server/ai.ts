@@ -1,11 +1,19 @@
 // Shared Claude API helper for all AI features
+export function getAnthropicApiKey() {
+  return process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY || process.env.CLAUDE_API_KEY || "";
+}
+
+export function hasAnthropicApiKey() {
+  return !!getAnthropicApiKey();
+}
+
 export async function callClaude(
   prompt: string,
   system = "You are an expert executive recruiting assistant for The Hiring Advisors.",
   maxTokens = 1500,
 ): Promise<string> {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error("ANTHROPIC_API_KEY not set — add it in Render environment variables");
+  const key = getAnthropicApiKey();
+  if (!key) throw new Error("Anthropic API key not configured — set ANTHROPIC_API_KEY, ANTHROPIC_KEY, or CLAUDE_API_KEY in Render environment variables");
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",

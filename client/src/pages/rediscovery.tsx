@@ -60,6 +60,8 @@ interface StatusData {
   hasResults: boolean;
   generatedAt: string | null;
   candidatesAnalyzed: number;
+  error?: string | null;
+  hasAnthropicApiKey?: boolean;
 }
 
 function ScoreBadge({ score }: { score: number }) {
@@ -322,12 +324,19 @@ export default function TalentRediscovery() {
             </div>
           )}
 
-          {!process.env.ANTHROPIC_API_KEY && !status?.hasResults && !isRunning && (
+          {status?.hasAnthropicApiKey === false && !status?.hasResults && !isRunning && (
             <div className="mt-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/10 px-4 py-3 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
               <AlertCircle size={13} className="shrink-0 mt-0.5" />
               <span>
-                <strong>ANTHROPIC_API_KEY required.</strong> Add it in your Render environment variables to enable AI analysis.
+                <strong>Anthropic API key required.</strong> Set ANTHROPIC_API_KEY, ANTHROPIC_KEY, or CLAUDE_API_KEY in Render environment variables to enable AI analysis.
               </span>
+            </div>
+          )}
+
+          {status?.error && !isRunning && (
+            <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 flex items-start gap-2 text-xs text-destructive">
+              <AlertCircle size={13} className="shrink-0 mt-0.5" />
+              <span>{status.error}</span>
             </div>
           )}
         </CardContent>

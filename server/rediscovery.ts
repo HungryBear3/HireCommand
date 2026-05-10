@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { db } from "./storage";
 import { eq } from "drizzle-orm";
 import { candidateJobAssignments, candidates, jobs } from "@shared/schema";
-import { callClaude, parseJSON } from "./ai";
+import { callClaude, hasAnthropicApiKey, parseJSON } from "./ai";
 
 export interface JobMatch {
   candidateId: number;
@@ -143,7 +143,7 @@ export async function sourceCandidatesForJob(job: typeof jobs.$inferSelect, max 
   const fallbackMatches = heuristicMatchesForJob(job, allCandidates, max);
   let matches = fallbackMatches;
 
-  if (process.env.ANTHROPIC_API_KEY) {
+  if (hasAnthropicApiKey()) {
     try {
       const reqs = parseRequirements(job.requirements).join(", ");
       const shortlist = fallbackMatches.length > 0
@@ -318,6 +318,7 @@ export function registerRediscoveryRoutes(app: Express) {
       generatedAt: latestResults?.generatedAt ?? null,
       candidatesAnalyzed: latestResults?.candidatesAnalyzed ?? 0,
       error: latestError,
+      hasAnthropicApiKey: hasAnthropicApiKey(),
     });
   });
 
