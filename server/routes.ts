@@ -650,28 +650,16 @@ export async function registerRoutes(
     const activeJobLoxoIds: number[] = [];
 
     try {
-      // --- Sync People (candidates) via scroll_id pagination ---
-      send({ phase: "people", message: "Fetching candidates from Loxo...", progress: 0 });
-      const maxPeople = parseInt((req.query.maxPeople as string) || "10000");
-      let scrollId: string | null = null;
-      let scrollPage = 0;
-      const perPage = 25;
-      const maxScrollPages = Math.ceil(maxPeople / perPage);
-
-      while (scrollPage < maxScrollPages) {
-        const url = scrollId
-          ? `${LOXO_BASE}/${slug}/people?per_page=${perPage}&scroll_id=${encodeURIComponent(scrollId)}`
-          : `${LOXO_BASE}/${slug}/people?per_page=${perPage}`;
-
-        const r = await fetch(url, { headers: { Authorization: `Token ${apiKey}` } });
-        if (!r.ok) { send({ error: `Loxo API error: ${r.status}` }); break; }
-        const data: any = await r.json();
-        const people: any[] = data.people || [];
-        if (people.length === 0) break;
-
-        scrollId = data.scroll_id || null;
-
+      // --- Sync People (candidates) via scroll_id first, then page fallback ---
+      send({ phase: "people", message: "Fetching all candidates from Loxo...", progress: 0 });
+      const maxPeopleParam = parseInt((req.query.maxPeople as string) || "0");
+      const maxPeople = Number.isFinite(maxPeopleParam) && maxPeopleParam > 0 ? maxPeopleParam : Number.POSITIVE_INFINITY;
+      const peoplePerPage = 100;
+      const seenPeople = new Set<number>();
+      const processPeople = async (people: any[]) => {
         for (const p of people) {
+          if (!p?.id || seenPeople.has(p.id)) continue;
+          seenPeople.add(p.id);
           const email = p.emails?.[0]?.value || "";
           const phone = p.phones?.[0]?.value || "";
           const location = loxoLocation(p);
@@ -702,16 +690,60 @@ export async function registerRoutes(
           await storage.upsertCandidateFromLoxo(candidate);
           totalCandidates++;
         }
+      };
 
+      let scrollId: string | null = null;
+      let scrollPage = 0;
+      while (totalCandidates < maxPeople) {
+        const url = scrollId
+          ? `${LOXO_BASE}/${slug}/people?per_page=${peoplePerPage}&scroll_id=${encodeURIComponent(scrollId)}`
+          : `${LOXO_BASE}/${slug}/people?per_page=${peoplePerPage}`;
+
+        const r = await fetch(url, { headers: { Authorization: `Token ${apiKey}` } });
+        if (!r.ok) { send({ error: `Loxo people API error: ${r.status}` }); break; }
+        const data: any = await r.json();
+        const people = loxoList(data, ["people"]);
+        if (people.length === 0) break;
+
+        await processPeople(people);
+        scrollId = data.scroll_id || data.next_scroll_id || null;
         scrollPage++;
+
         send({
           phase: "people",
           message: `Synced ${totalCandidates} candidates...`,
-          progress: Math.round((scrollPage / maxScrollPages) * 50),
+          progress: Math.min(30, Math.round(scrollPage * 2)),
           count: totalCandidates,
         });
 
-        if (!scrollId) break; // No more pages
+        if (!scrollId) break;
+      }
+
+      // Some Loxo accounts cap scroll windows. Keep paging until Loxo returns an empty/short page.
+      let peoplePage = 1;
+      let emptyOrDuplicatePages = 0;
+      while (totalCandidates < maxPeople && peoplePage <= 10000 && emptyOrDuplicatePages < 3) {
+        const r = await fetch(`${LOXO_BASE}/${slug}/people?per_page=${peoplePerPage}&page=${peoplePage}`, {
+          headers: { Authorization: `Token ${apiKey}` },
+        });
+        if (!r.ok) { send({ phase: "people", message: `Stopping paged people sync: Loxo returned ${r.status}` }); break; }
+        const data: any = await r.json();
+        const people = loxoList(data, ["people"]);
+        if (people.length === 0) break;
+
+        const before = totalCandidates;
+        await processPeople(people);
+        if (totalCandidates === before) emptyOrDuplicatePages++;
+        else emptyOrDuplicatePages = 0;
+
+        send({
+          phase: "people",
+          message: `Synced ${totalCandidates} candidates (paged scan ${peoplePage})...`,
+          progress: 30,
+          count: totalCandidates,
+        });
+
+        peoplePage++;
       }
 
       await storage.setSetting("loxo_candidates_synced", String(totalCandidates));
@@ -748,7 +780,7 @@ export async function registerRoutes(
           }
 
           send({ phase: "companies", message: `Synced ${totalCompanies} companies...`, progress: 35 + Math.min(15, page), count: totalCompanies });
-          hasMore = page < (data.total_pages || page);
+          hasMore = records.length >= 100;
           page++;
         }
         if (totalCompanies > 0) break;
@@ -788,7 +820,7 @@ export async function registerRoutes(
           }
 
           send({ phase: "clients", message: `Synced ${totalClients} clients/contacts...`, progress: 50 + Math.min(10, page), count: totalClients });
-          hasMore = page < (data.total_pages || page);
+          hasMore = records.length >= 100;
           page++;
         }
         if (totalClients > 0) break;
@@ -797,22 +829,28 @@ export async function registerRoutes(
       send({ phase: "clients", message: `✓ ${totalClients} clients/contacts synced`, progress: 60 });
 
       // --- Sync Active Jobs ---
-      send({ phase: "jobs", message: "Fetching current active jobs from Loxo...", progress: 60 });
+      send({ phase: "jobs", message: "Fetching all current active jobs from Loxo...", progress: 60 });
       let jobPage = 1;
       let hasMoreJobs = true;
-      const maxJobPages = parseInt((req.query.maxJobPages as string) || "1000"); // default: pull every page returned by Loxo
+      const maxJobPages = parseInt((req.query.maxJobPages as string) || "10000"); // safety valve only; default scans until empty page
+      const jobsPerPage = 100;
+      const seenJobs = new Set<number>();
+      let duplicateJobPages = 0;
 
       while (hasMoreJobs && jobPage <= maxJobPages) {
         const r = await fetch(
-          `${LOXO_BASE}/${slug}/jobs?per_page=25&page=${jobPage}`,
+          `${LOXO_BASE}/${slug}/jobs?per_page=${jobsPerPage}&page=${jobPage}`,
           { headers: { Authorization: `Token ${apiKey}` } }
         );
         if (!r.ok) { send({ error: `Loxo jobs API error: ${r.status}` }); break; }
         const data: any = await r.json();
-        const jobsList: any[] = data.results || [];
+        const jobsList: any[] = loxoList(data, ["jobs"]);
         if (jobsList.length === 0) { hasMoreJobs = false; break; }
 
+        const seenBeforePage = seenJobs.size;
         for (const j of jobsList) {
+          if (!j?.id || seenJobs.has(j.id)) continue;
+          seenJobs.add(j.id);
           if (!isActiveLoxoJob(j)) continue;
           activeJobLoxoIds.push(j.id);
           totalActiveJobs++;
@@ -851,15 +889,15 @@ export async function registerRoutes(
           totalJobs++;
         }
 
-        const totalPages = data.total_pages || 1;
         send({
           phase: "jobs",
-          message: `Synced ${totalActiveJobs} active jobs (page ${jobPage}/${Math.min(maxJobPages, totalPages)})`,
-          progress: 60 + Math.round((jobPage / Math.min(maxJobPages, totalPages)) * 40),
+          message: `Synced ${totalActiveJobs} active jobs (scanned page ${jobPage})`,
+          progress: Math.min(99, 60 + Math.round(jobPage / 2)),
           count: totalJobs,
         });
 
-        hasMoreJobs = jobPage < data.total_pages;
+        duplicateJobPages = seenJobs.size === seenBeforePage ? duplicateJobPages + 1 : 0;
+        hasMoreJobs = duplicateJobPages < 3;
         jobPage++;
       }
 
