@@ -2,6 +2,7 @@ import type { Express } from "express";
 import multer from "multer";
 import pdfParse from "pdf-parse";
 import mammoth from "mammoth";
+import { calculateCandidateMatchScore } from "./match-score";
 import { storage } from "./storage";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -46,7 +47,7 @@ function parseCV(text: string) {
   const zipMatch = text.match(/\b\d{5}(?:-\d{4})?\b/);
   const location = locationMatch?.[1]?.trim() || zipMatch?.[0] || "";
 
-  return {
+  const parsed = {
     name,
     title: titleLine,
     company,
@@ -56,10 +57,14 @@ function parseCV(text: string) {
     linkedin: linkedinMatch ? `https://www.${linkedinMatch[0]}` : "",
     notes: text.slice(0, 1000),
     status: "sourced" as const,
-    matchScore: 75,
     tags: "[]",
     lastContact: new Date().toISOString().split("T")[0],
     timeline: "[]",
+  };
+
+  return {
+    ...parsed,
+    matchScore: calculateCandidateMatchScore(parsed),
   };
 }
 

@@ -110,14 +110,61 @@ function matchesLocation(candidateLocation: string, selectedLocation: string, lo
   return location.includes(query);
 }
 
+function stableHash(text: string): number {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  return hash;
+}
+
+function parsedTags(candidate: Candidate): string[] {
+  try {
+    const parsed = JSON.parse(candidate.tags || "[]");
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function candidateDisplayScore(candidate: Candidate, jobs: Job[] = []): number {
+  // Preserve explicitly curated high/low scores, but replace the old Loxo default
+  // that made every imported candidate look like a 75% match.
+  if (candidate.matchScore && candidate.matchScore !== 75) return candidate.matchScore;
+
+  const tags = parsedTags(candidate);
+  const activeJobText = jobs.map((job) => `${job.title} ${job.company} ${job.description} ${job.requirements}`).join(" ");
+  const haystack = [candidate.name, candidate.title, candidate.company, candidate.location, candidate.notes, activeJobText, ...tags]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  let score = 62;
+  if (/\b(cfo|chief financial|chief accounting|cao|controller|vp finance|finance)\b/.test(haystack)) score += 10;
+  if (/\b(ceo|president|coo|cto|chief|vp|vice president|director|head of)\b/.test(haystack)) score += 8;
+  if (/\b(pe|private equity|portfolio|backed|sponsor|value creation|turnaround|carve-out|exit|ebitda)\b/.test(haystack)) score += 9;
+  if (/\b(healthcare|manufacturing|industrial|energy|fintech|software|saas|technology|accounting|sec reporting)\b/.test(haystack)) score += 5;
+  if (/\b(ipo|m&a|acquisition|integration|restructuring|transformation|audit|tax|treasury|capital)\b/.test(haystack)) score += 5;
+  if (candidate.linkedin) score += 3;
+  if (candidate.email) score += 2;
+  if (candidate.location) score += 2;
+  if (tags.length >= 3) score += 4;
+  score += stableHash([candidate.name, candidate.title, candidate.company].filter(Boolean).join("|")) % 11;
+
+  return Math.max(55, Math.min(98, score));
+}
+
+function withDisplayScore(candidate: Candidate, jobs: Job[] = []): Candidate {
+  return { ...candidate, matchScore: candidateDisplayScore(candidate, jobs) };
+}
+
 function ScoreBar({ score }: { score: number }) {
-  const color = score >= 90 ? "bg-green-500" : score >= 80 ? "bg-blue-500" : "bg-amber-500";
+  const clamped = Math.max(0, Math.min(100, score));
+  const color = clamped >= 90 ? "bg-green-500" : clamped >= 80 ? "bg-blue-500" : "bg-amber-500";
   return (
     <div className="flex items-center gap-2">
       <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div className={cn("h-full rounded-full", color)} style={{ width: `${score}%` }} />
+        <div className={cn("h-full rounded-full", color)} style={{ width: `${clamped}%` }} />
       </div>
-      <span className="text-xs font-medium tabular-nums">{score}%</span>
+      <span className="text-xs font-medium tabular-nums">{clamped}%</span>
     </div>
   );
 }
@@ -476,10 +523,12 @@ export default function Candidates() {
   const { data: candidates = [] } = useQuery<Candidate[]>({
     queryKey: ["/api/candidates"],
   });
+  const { data: jobs = [] } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
+  const candidatesWithDisplayScores = candidates.map((candidate) => withDisplayScore(candidate, jobs));
 
   // Derive unique locations
   const uniqueLocations = Array.from(
-    new Set(candidates.map((c) => c.location).filter(Boolean))
+    new Set(candidatesWithDisplayScores.map((c) => c.location).filter(Boolean))
   ).sort();
 
   // Count active filters
@@ -500,7 +549,7 @@ export default function Candidates() {
     setSearch("");
   }
 
-  const filtered = candidates.filter((c) => {
+  const filtered = candidatesWithDisplayScores.filter((c) => {
     if (statusFilter !== "all" && c.status !== statusFilter) return false;
     if (functionFilter !== "all" && !matchesFunction(c.title, functionFilter)) return false;
     if (!matchesLocation(c.location, locationFilter, locationSearch)) return false;
@@ -526,7 +575,7 @@ export default function Candidates() {
         <div>
           <h1 className="font-display font-bold text-xl">Candidates</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {candidates.length} candidates in your pipeline
+            {candidatesWithDisplayScores.length} candidates in your pipeline
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -683,7 +732,7 @@ export default function Candidates() {
       {/* Results count */}
       {activeFilterCount > 0 || search ? (
         <p className="text-xs text-muted-foreground">
-          Showing {filtered.length} of {candidates.length} candidates
+          Showing {filtered.length} of {candidatesWithDisplayScores.length} candidates
         </p>
       ) : null}
 
@@ -769,7 +818,7 @@ export default function Candidates() {
                           variant="ghost"
                           size="icon"
                           className="h-6 w-6 text-muted-foreground hover:text-primary"
-                          onClick={(e) => { e.stopPropagation(); setBriefCandidate(candidate); }}
+                          onClick={(e) => { e.stopPropagation(); setBriefCandidate(withDisplayScore(candidate, jobs)); }}
                           data-testid={`button-brief-${candidate.id}`}
                           title="Generate AI Brief"
                         >
@@ -898,6 +947,8 @@ function CandidateDetail({
     },
   });
 
+  const displayScore = candidateDisplayScore(candidate, assignedJobs);
+
   const tags: string[] = (() => {
     try { return JSON.parse(candidate.tags); } catch { return []; }
   })();
@@ -1025,13 +1076,13 @@ function CandidateDetail({
         <CardContent className="p-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">AI Match Score</span>
-            <span className="text-lg font-bold text-primary">{candidate.matchScore}%</span>
+            <span className="text-lg font-bold text-primary">{displayScore}%</span>
           </div>
           <div className="space-y-2">
-            <ScoreRow label="Technical Skills" score={candidate.matchScore - 2} />
-            <ScoreRow label="PE Experience" score={candidate.matchScore - 5} />
-            <ScoreRow label="Industry Fit" score={candidate.matchScore + 1} />
-            <ScoreRow label="Leadership" score={candidate.matchScore - 3} />
+            <ScoreRow label="Technical Skills" score={displayScore - 2} />
+            <ScoreRow label="PE Experience" score={displayScore - 5} />
+            <ScoreRow label="Industry Fit" score={displayScore + 1} />
+            <ScoreRow label="Leadership" score={displayScore - 3} />
           </div>
         </CardContent>
       </Card>

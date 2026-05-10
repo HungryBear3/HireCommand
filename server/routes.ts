@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertCandidateSchema, insertJobSchema, insertActivitySchema, insertInterviewSchema, insertOpportunitySchema, insertCampaignSchema } from "@shared/schema";
 import { registerOpenApi } from "./openapi";
 import { registerSourcingRoutes } from "./sourcing";
+import { calculateCandidateMatchScore } from "./match-score";
 import { registerQBRoutes } from "./quickbooks";
 import { registerLinkedInSyncRoutes, checkAndRunStartupSync } from "./linkedin-sync";
 import { registerCandidateImportRoutes } from "./candidate-import";
@@ -867,7 +868,6 @@ export async function registerRoutes(
             email,
             phone,
             linkedin: p.linkedin_url || "",
-            matchScore: 75,
             status,
             lastContact: p.updated_at ? p.updated_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
             tags: JSON.stringify(tags.slice(0, 6)),
@@ -875,7 +875,12 @@ export async function registerRoutes(
             timeline: JSON.stringify([{ date: p.updated_at?.slice(0, 10) || new Date().toISOString().slice(0, 10), event: "Synced from Loxo" }]),
           };
 
-          await storage.upsertCandidateFromLoxo(candidate);
+          const scoredCandidate = {
+            ...candidate,
+            matchScore: calculateCandidateMatchScore({ ...candidate, skillsets: p.skillsets }),
+          };
+
+          await storage.upsertCandidateFromLoxo(scoredCandidate);
           totalCandidates++;
         }
       };
