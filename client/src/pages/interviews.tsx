@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { Interview } from "@shared/schema";
+import type { Candidate, Interview, Job } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -59,6 +59,17 @@ const typeColors: Record<string, string> = {
   pe_partner:
     "bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
 };
+
+type CandidateJob = Job & { assignmentStatus?: string };
+
+function interviewTypeForStage(stage?: string) {
+  const normalized = (stage || "").toLowerCase();
+  if (normalized.includes("screen")) return "phone_screen";
+  if (normalized.includes("technical")) return "technical";
+  if (normalized.includes("final") || normalized.includes("offer") || normalized.includes("placed")) return "final";
+  if (normalized.includes("partner") || normalized.includes("pe")) return "pe_partner";
+  return "first_round";
+}
 
 const typeLabels: Record<string, string> = {
   phone_screen: "Phone Screen",
@@ -183,6 +194,33 @@ function LogInterviewDialog({ onSuccess }: { onSuccess: () => void }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [rating, setRating] = useState(0);
+
+  const { data: candidates = [] } = useQuery<Candidate[]>({
+    queryKey: ["/api/candidates"],
+    enabled: open,
+  });
+  const { data: jobs = [] } = useQuery<Job[]>({
+    queryKey: ["/api/jobs"],
+    enabled: open,
+  });
+
+  const [selectedCandidateId, setSelectedCandidateId] = useState("");
+  const [selectedJobId, setSelectedJobId] = useState("");
+
+  const { data: candidateJobs = [] } = useQuery<CandidateJob[]>({
+    queryKey: ["/api/candidates", selectedCandidateId, "jobs"],
+    queryFn: async () => {
+      const res = await fetch(`/api/candidates/${selectedCandidateId}/jobs`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load candidate jobs");
+      return res.json();
+    },
+    enabled: open && !!selectedCandidateId,
+  });
+
+  const jobOptions = useMemo(
+    () => (candidateJobs.length > 0 ? candidateJobs : jobs.filter((job) => job.stage !== "closed")),
+    [candidateJobs, jobs]
+  );
   const [form, setForm] = useState({
     candidateId: "",
     candidateName: "",
@@ -210,6 +248,8 @@ function LogInterviewDialog({ onSuccess }: { onSuccess: () => void }) {
       queryClient.invalidateQueries({ queryKey: ["/api/interviews"] });
       setOpen(false);
       setRating(0);
+      setSelectedCandidateId("");
+      setSelectedJobId("");
       setForm({
         candidateId: "",
         candidateName: "",
@@ -275,6 +315,36 @@ function LogInterviewDialog({ onSuccess }: { onSuccess: () => void }) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  useEffect(() => {
+    if (!selectedCandidateId) return;
+    const candidate = candidates.find((c) => String(c.id) === selectedCandidateId);
+    if (!candidate) return;
+    setForm((prev) => ({
+      ...prev,
+      candidateId: String(candidate.id),
+      candidateName: candidate.name,
+      candidateTitle: candidate.title,
+    }));
+  }, [selectedCandidateId, candidates]);
+
+  useEffect(() => {
+    if (selectedJobId || candidateJobs.length === 0) return;
+    setSelectedJobId(String(candidateJobs[0].id));
+  }, [candidateJobs, selectedJobId]);
+
+  useEffect(() => {
+    if (!selectedJobId) return;
+    const job = jobOptions.find((j) => String(j.id) === selectedJobId) || jobs.find((j) => String(j.id) === selectedJobId);
+    if (!job) return;
+    setForm((prev) => ({
+      ...prev,
+      jobTitle: job.title,
+      jobCompany: job.company,
+      interviewType: interviewTypeForStage((job as CandidateJob).assignmentStatus || job.stage),
+      nextSteps: prev.nextSteps || (job.stage === "offer" ? "Confirm final decision and offer details" : "Schedule next interview round"),
+    }));
+  }, [selectedJobId, jobOptions, jobs]);
+
   return (
     <>
       <Button
@@ -292,6 +362,50 @@ function LogInterviewDialog({ onSuccess }: { onSuccess: () => void }) {
           <DialogTitle className="font-display">Log Interview</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+          <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Pull candidate from pipeline</Label>
+                <Select
+                  value={selectedCandidateId}
+                  onValueChange={(value) => {
+                    setSelectedCandidateId(value);
+                    setSelectedJobId("");
+                  }}
+                >
+                  <SelectTrigger data-testid="select-interview-candidate">
+                    <SelectValue placeholder="Select candidate to autofill" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {candidates.map((candidate) => (
+                      <SelectItem key={candidate.id} value={String(candidate.id)}>
+                        {candidate.name} — {candidate.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Pull job / stage</Label>
+                <Select value={selectedJobId} onValueChange={setSelectedJobId}>
+                  <SelectTrigger data-testid="select-interview-job">
+                    <SelectValue placeholder={selectedCandidateId ? "Select assigned job" : "Select job to autofill"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {jobOptions.map((job) => (
+                      <SelectItem key={job.id} value={String(job.id)}>
+                        {job.title} — {job.company} ({job.stage})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Pick a candidate/job and the form fills candidate details, role/company, and interview type from the job stage. You can still edit anything below.
+            </p>
+          </div>
+
           {/* Candidate row */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">

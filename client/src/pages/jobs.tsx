@@ -421,11 +421,23 @@ export default function Jobs() {
   const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
   const [bulkStage, setBulkStage] = useState("");
   const [placementInvoiceJob, setPlacementInvoiceJob] = useState<Job | null>(null);
+  const [candidateToAddId, setCandidateToAddId] = useState("");
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
+  const { data: candidates = [] } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"] });
+  const { data: selectedJobCandidates = [] } = useQuery<Candidate[]>({
+    queryKey: ["/api/jobs", selectedJob?.id, "candidates"],
+    queryFn: async () => {
+      const res = await fetch(`/api/jobs/${selectedJob!.id}/candidates`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load job candidates");
+      return res.json();
+    },
+    enabled: !!selectedJob,
+  });
   const activeJobs = jobs.filter(job => job.stage !== "closed");
   const closedJobs = jobs.filter(job => job.stage === "closed");
   const selectedActiveJobs = activeJobs.filter(job => selectedJobIds.includes(job.id));
+  const addableCandidates = candidates.filter(candidate => !selectedJobCandidates.some(assigned => assigned.id === candidate.id));
 
   const toggleJobSelection = (jobId: number) => {
     setSelectedJobIds(ids => ids.includes(jobId) ? ids.filter(id => id !== jobId) : [...ids, jobId]);
@@ -451,6 +463,7 @@ export default function Jobs() {
       toggleJobSelection(job.id);
       return;
     }
+    setCandidateToAddId("");
     setSelectedJob(job);
   };
 
@@ -513,6 +526,21 @@ export default function Jobs() {
       toast({ title: `${count} job${count === 1 ? "" : "s"} closed` });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const addCandidateMutation = useMutation({
+    mutationFn: async ({ candidateId, jobId }: { candidateId: number; jobId: number }) => {
+      const res = await apiRequest("POST", `/api/candidates/${candidateId}/jobs`, { jobId });
+      return res.json();
+    },
+    onSuccess: () => {
+      const candidate = candidates.find(c => String(c.id) === candidateToAddId);
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", selectedJob?.id, "candidates"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      setCandidateToAddId("");
+      toast({ title: "Candidate added", description: candidate && selectedJob ? `${candidate.name} was added to ${selectedJob.title}.` : "Candidate was added to the job." });
+    },
+    onError: (e: Error) => toast({ title: "Could not add candidate", description: e.message, variant: "destructive" }),
   });
 
   return (
@@ -766,6 +794,44 @@ export default function Jobs() {
                     </ul>
                   </div>
                 )}
+
+                <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Candidate Pipeline</p>
+                      <p className="text-xs text-muted-foreground">Add candidates directly to this job.</p>
+                    </div>
+                    <Badge variant="secondary">{selectedJobCandidates.length} assigned</Badge>
+                  </div>
+                  {selectedJobCandidates.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedJobCandidates.slice(0, 8).map(candidate => (
+                        <Badge key={candidate.id} variant="outline" className="font-normal">{candidate.name}</Badge>
+                      ))}
+                      {selectedJobCandidates.length > 8 && <Badge variant="outline">+{selectedJobCandidates.length - 8} more</Badge>}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <select
+                      value={candidateToAddId}
+                      onChange={(e) => setCandidateToAddId(e.target.value)}
+                      className="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+                    >
+                      <option value="">Select candidate…</option>
+                      {addableCandidates.map(candidate => (
+                        <option key={candidate.id} value={candidate.id}>{candidate.name} — {candidate.title}</option>
+                      ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={!candidateToAddId || addCandidateMutation.isPending || selectedJob.stage === "closed"}
+                      onClick={() => addCandidateMutation.mutate({ candidateId: Number(candidateToAddId), jobId: selectedJob.id })}
+                    >
+                      <Plus size={13} /> Add
+                    </Button>
+                  </div>
+                </div>
 
                 <div className="flex gap-2 pt-2">
                   {selectedJob.stage !== "placed" && selectedJob.stage !== "closed" && (
