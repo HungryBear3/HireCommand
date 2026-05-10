@@ -466,6 +466,18 @@ export async function registerRoutes(
   const LOXO_BASE = "https://app.loxo.co/api";
   const LOXO_SLUG = "the-hiring-advisors-1";
 
+  const compactLocation = (...parts: Array<unknown>): string => parts
+    .map((part) => (typeof part === "string" || typeof part === "number" ? String(part).trim() : ""))
+    .filter(Boolean)
+    .join(", ");
+
+  const loxoLocation = (record: any): string => {
+    const cityState = compactLocation(record.city, record.state || record.state_code);
+    const zip = record.zip || record.zip_code || record.postal_code || record.postcode;
+    const withZip = compactLocation(cityState, zip);
+    return withZip || record.location || record.macro_address || "";
+  };
+
   // Save credentials
   app.post("/api/loxo/credentials", async (req, res) => {
     const { apiKey, slug } = req.body;
@@ -547,7 +559,7 @@ export async function registerRoutes(
         for (const p of people) {
           const email = p.emails?.[0]?.value || "";
           const phone = p.phones?.[0]?.value || "";
-          const location = [p.city, p.state].filter(Boolean).join(", ") || p.location || "";
+          const location = loxoLocation(p);
           const tags = p.all_raw_tags
             ? p.all_raw_tags.split(",").map((t: string) => t.trim()).filter(Boolean)
             : [];
@@ -617,7 +629,7 @@ export async function registerRoutes(
           else if (statusName.includes("placed") || statusName.includes("filled")) stage = "placed";
           else if (statusName.includes("closed") || statusName.includes("inactive")) stage = "closed"; // closed out
 
-          const location = [j.city, j.state_code].filter(Boolean).join(", ") || j.macro_address || "";
+          const location = loxoLocation(j);
           const companyName = j.company?.name || "Unknown Company";
           const daysOpen = j.opened_at
             ? Math.floor((Date.now() - new Date(j.opened_at).getTime()) / 86400000)

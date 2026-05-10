@@ -34,16 +34,17 @@ function parseCV(text: string) {
 
   // Look for a title / headline — first line after name that looks like a job title
   const titleLine = lines.slice(1, 6).find(l =>
-    /\b(director|manager|vp|vice president|president|cfo|ceo|cto|coo|officer|head|lead|analyst|engineer|consultant|advisor)\b/i.test(l)
+    /\b(director|manager|vp|vice president|president|cfo|cao|ceo|cto|coo|officer|controller|accounting|accountant|head|lead|analyst|engineer|consultant|advisor)\b/i.test(l)
   ) || lines[1] || "";
 
   // Company: look for "at <Company>" or lines near title
   const companyMatch = text.match(/\bat\s+([A-Z][^,\n]{2,40})/);
   const company = companyMatch?.[1]?.trim() || "";
 
-  // Location: look for common location patterns (City, ST)
-  const locationMatch = text.match(/\b([A-Z][a-zA-Z\s]+,\s*[A-Z]{2})\b/);
-  const location = locationMatch?.[1]?.trim() || "";
+  // Location: look for common location patterns (City, ST plus optional ZIP)
+  const locationMatch = text.match(/\b([A-Z][a-zA-Z\s]+,\s*[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?)\b/);
+  const zipMatch = text.match(/\b\d{5}(?:-\d{4})?\b/);
+  const location = locationMatch?.[1]?.trim() || zipMatch?.[0] || "";
 
   return {
     name,

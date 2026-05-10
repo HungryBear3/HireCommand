@@ -77,6 +77,7 @@ function parseBrief(query: string): Partial<SourcingBrief> {
   // Title extraction
   const titleKeywords: Record<string, string[]> = {
     "Chief Financial Officer": ["cfo", "chief financial officer", "vp finance", "vp of finance", "vice president finance", "head of finance", "finance leader"],
+    "Chief Accounting Officer": ["cao", "chief accounting officer", "chief accountant", "vp accounting", "vp of accounting", "vice president accounting", "head of accounting", "accounting leader", "technical accounting", "sec reporting"],
     "Chief Technology Officer": ["cto", "chief technology officer", "vp engineering", "vp of engineering", "head of engineering", "tech lead"],
     "Chief Operating Officer": ["coo", "chief operating officer", "vp operations", "head of operations"],
     "Chief Marketing Officer": ["cmo", "chief marketing officer", "vp marketing", "head of marketing"],
@@ -116,15 +117,17 @@ function parseBrief(query: string): Partial<SourcingBrief> {
   const locationPatterns = [
     /\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g,
     /\b(new york|chicago|los angeles|san francisco|boston|dallas|houston|atlanta|miami|seattle|denver|austin|nashville|charlotte|philadelphia|phoenix|minneapolis)/gi,
+    /\b\d{5}(?:-\d{4})?\b/g, // ZIP/postal codes
     /\b([A-Z]{2})\b/g, // state abbreviations
     /\b(remote|hybrid|on-site|onsite)\b/gi,
   ];
 
   const locations: string[] = [];
   for (const pattern of locationPatterns) {
-    const matches = [...query.matchAll(pattern)];
-    for (const m of matches) {
-      const loc = (m[1] || m[0]).trim();
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(query)) !== null) {
+      const loc = (match[1] || match[0]).trim();
       if (loc.length > 1 && !locations.includes(loc)) locations.push(loc);
     }
   }
@@ -465,8 +468,8 @@ async function searchPDL(
 // ─── Demo / fallback data (used when no API keys configured) ───────────────────
 
 function generateDemoResults(brief: Partial<SourcingBrief>, query: string): SourcingCandidate[] {
-  const titles = brief.titles?.length ? brief.titles : ["Chief Financial Officer"];
-  const locations = brief.locations?.length ? brief.locations : ["New York", "Chicago", "Boston"];
+  const titles = brief.titles?.length ? brief.titles : ["Chief Accounting Officer"];
+  const locations = brief.locations?.length ? brief.locations : ["Chicago", "New York", "Boston"];
   const industries = brief.industries?.length ? brief.industries : ["Healthcare", "Technology", "Private Equity"];
 
   const names = [

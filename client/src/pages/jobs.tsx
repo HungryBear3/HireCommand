@@ -105,7 +105,7 @@ function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Job Title *</Label>
-              <Input value={form.title} onChange={e => set("title", e.target.value)} placeholder="Chief Financial Officer" className="h-9 text-sm" required />
+              <Input value={form.title} onChange={e => set("title", e.target.value)} placeholder="Chief Accounting Officer" className="h-9 text-sm" required />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Company *</Label>
@@ -113,7 +113,7 @@ function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Location</Label>
-              <Input value={form.location} onChange={e => set("location", e.target.value)} placeholder="New York, NY" className="h-9 text-sm" />
+              <Input value={form.location} onChange={e => set("location", e.target.value)} placeholder="Chicago, IL 60606" className="h-9 text-sm" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Fee Potential</Label>

@@ -848,7 +848,7 @@ export default function Source() {
                 value={query}
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown}
-                placeholder={`Describe who you're looking for...\ne.g. CFO with PE-backed healthcare experience, 10+ years, Chicago or NYC`}
+                placeholder={`Describe who you're looking for...\ne.g. CAO with technical accounting and SEC reporting experience, 10+ years, Chicago 60606`}
                 className="resize-none min-h-[80px] text-sm leading-relaxed"
                 style={{ maxHeight: "144px" }}
                 data-testid="textarea-search-query"

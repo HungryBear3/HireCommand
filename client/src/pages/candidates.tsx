@@ -65,7 +65,7 @@ const statusColors: Record<string, string> = {
 const FUNCTION_OPTIONS = [
   { label: "All Functions", value: "all" },
   { label: "CFO / Finance", value: "CFO / Finance", keywords: ["CFO", "VP Finance", "Finance", "Chief Financial"] },
-  { label: "CAO / Accounting", value: "CAO / Accounting", keywords: ["CAO", "Chief Accounting", "Chief Accountant", "Controller", "Accounting", "Accountant", "SEC Reporting", "Technical Accounting", "Corporate Controller", "VP Accounting"] },
+  { label: "CAO / Accounting", value: "CAO / Accounting", keywords: ["CAO", "Chief Accounting Officer", "Chief Accounting", "Chief Accountant", "Controller", "Accounting", "Accountant", "SEC Reporting", "Technical Accounting", "Corporate Controller", "VP Accounting"] },
   { label: "CTO / Technology", value: "CTO / Technology", keywords: ["CTO", "VP Engineering", "Technology", "Chief Technology", "Engineering"] },
   { label: "COO / Operations", value: "COO / Operations", keywords: ["COO", "VP Operations", "Operations", "Chief Operating"] },
   { label: "CHRO / People", value: "CHRO / People", keywords: ["CHRO", "VP People", "People", "HR", "Human Resources", "Chief People"] },
@@ -242,7 +242,7 @@ function AddCandidateDialog() {
               id="nc-title"
               value={form.title}
               onChange={(e) => handleChange("title", e.target.value)}
-              placeholder="VP Finance"
+              placeholder="CAO / Chief Accounting Officer"
               required
               data-testid="input-nc-title"
             />
@@ -551,7 +551,7 @@ export default function Candidates() {
           <CardContent className="p-3 flex items-center gap-2">
             <Sparkles size={16} className="text-primary flex-shrink-0" />
             <Input
-              placeholder='Describe your ideal candidate... e.g. "CTO with platform scaling experience" or "CFO with PE exit in healthcare"'
+              placeholder='Describe your ideal candidate... e.g. "CAO with SEC reporting experience in Chicago 60606"'
               className="border-0 bg-transparent focus-visible:ring-0 text-sm"
               data-testid="input-ai-search"
             />
