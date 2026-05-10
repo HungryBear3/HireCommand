@@ -44,6 +44,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
+import type { Candidate, Job, LoxoClient } from "@shared/schema";
+
+const titleCaseStage = (value: string) => value
+  .split(/[ _-]+/)
+  .filter(Boolean)
+  .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+  .join(" ");
 
 // ═══════════════════════════════════════════════════════════════
 // DATA LAYER — All intelligence data used across tabs
@@ -53,90 +60,6 @@ import { useQuery } from "@tanstack/react-query";
 
 interface FlowNode { id: string; label: string; value: number; side: "left" | "right"; color: string }
 interface FlowLink { source: string; target: string; value: number }
-
-const talentFlowData: Record<string, { nodes: FlowNode[]; links: FlowLink[]; insights: string[] }> = {
-  cfo: {
-    nodes: [
-      { id: "big4", label: "Big 4 Advisory", value: 32, side: "left", color: "#3b82f6" },
-      { id: "ibank", label: "Investment Banking", value: 24, side: "left", color: "#6366f1" },
-      { id: "peportco", label: "PE Portfolio Cos", value: 28, side: "left", color: "#8b5cf6" },
-      { id: "f500", label: "Fortune 500 Finance", value: 18, side: "left", color: "#0ea5e9" },
-      { id: "fpa", label: "FP&A / Controller", value: 14, side: "left", color: "#14b8a6" },
-      { id: "pe_backed", label: "PE-Backed CFO", value: 48, side: "right", color: "#2563eb" },
-      { id: "public_cfo", label: "Public Co CFO", value: 18, side: "right", color: "#0891b2" },
-      { id: "cfo_consult", label: "CFO Advisory", value: 12, side: "right", color: "#7c3aed" },
-      { id: "board", label: "Board / Operating Partner", value: 10, side: "right", color: "#059669" },
-      { id: "ceo_coo", label: "CEO / COO Promotion", value: 8, side: "right", color: "#d97706" },
-    ],
-    links: [
-      { source: "big4", target: "pe_backed", value: 18 }, { source: "big4", target: "public_cfo", value: 8 }, { source: "big4", target: "cfo_consult", value: 6 },
-      { source: "ibank", target: "pe_backed", value: 14 }, { source: "ibank", target: "ceo_coo", value: 4 }, { source: "ibank", target: "board", value: 6 },
-      { source: "peportco", target: "pe_backed", value: 12 }, { source: "peportco", target: "public_cfo", value: 8 }, { source: "peportco", target: "board", value: 4 }, { source: "peportco", target: "ceo_coo", value: 4 },
-      { source: "f500", target: "pe_backed", value: 4 }, { source: "f500", target: "public_cfo", value: 2 }, { source: "f500", target: "cfo_consult", value: 6 }, { source: "f500", target: "ceo_coo", value: 0 },
-      { source: "fpa", target: "pe_backed", value: 0 }, { source: "fpa", target: "cfo_consult", value: 0 },
-    ].filter(l => l.value > 0),
-    insights: [
-      "56% of PE-backed CFOs come from Big 4 Advisory or Investment Banking backgrounds",
-      "PE portfolio-to-portfolio lateral moves account for 25% of all CFO placements",
-      "Board/Operating Partner exits are the fastest-growing destination (+34% YoY)",
-      "Average time from VP Finance to PE-backed CFO: 4.2 years",
-    ],
-  },
-  cto: {
-    nodes: [
-      { id: "faang", label: "FAANG / Big Tech", value: 35, side: "left", color: "#3b82f6" },
-      { id: "startup", label: "VC-Backed Startups", value: 28, side: "left", color: "#6366f1" },
-      { id: "enterprise", label: "Enterprise Software", value: 20, side: "left", color: "#8b5cf6" },
-      { id: "consulting_t", label: "Tech Consulting", value: 12, side: "left", color: "#0ea5e9" },
-      { id: "academic", label: "PhD / Research", value: 10, side: "left", color: "#14b8a6" },
-      { id: "pe_cto", label: "PE-Backed CTO", value: 42, side: "right", color: "#2563eb" },
-      { id: "startup_cto", label: "Startup CTO/VP Eng", value: 22, side: "right", color: "#7c3aed" },
-      { id: "cpo", label: "CPO / Product", value: 14, side: "right", color: "#0891b2" },
-      { id: "founder", label: "Founded Own Co", value: 12, side: "right", color: "#d97706" },
-      { id: "board_t", label: "Tech Advisory / Board", value: 8, side: "right", color: "#059669" },
-    ],
-    links: [
-      { source: "faang", target: "pe_cto", value: 16 }, { source: "faang", target: "startup_cto", value: 10 }, { source: "faang", target: "founder", value: 6 }, { source: "faang", target: "board_t", value: 3 },
-      { source: "startup", target: "pe_cto", value: 14 }, { source: "startup", target: "startup_cto", value: 8 }, { source: "startup", target: "founder", value: 6 },
-      { source: "enterprise", target: "pe_cto", value: 10 }, { source: "enterprise", target: "cpo", value: 6 }, { source: "enterprise", target: "startup_cto", value: 4 },
-      { source: "consulting_t", target: "pe_cto", value: 2 }, { source: "consulting_t", target: "cpo", value: 8 }, { source: "consulting_t", target: "board_t", value: 2 },
-      { source: "academic", target: "pe_cto", value: 0 }, { source: "academic", target: "startup_cto", value: 0 }, { source: "academic", target: "founder", value: 0 }, { source: "academic", target: "board_t", value: 3 },
-    ].filter(l => l.value > 0),
-    insights: [
-      "46% of PE-backed CTOs have FAANG or Big Tech pedigree",
-      "Startup-to-PE lateral moves are the #1 pipeline for CTO placements",
-      "Technical founders who fail to scale often transition to PE-backed CTO roles",
-      "Average tenure in PE-backed CTO role: 3.1 years before next move",
-    ],
-  },
-  coo: {
-    nodes: [
-      { id: "mbb", label: "McKinsey / BCG / Bain", value: 30, side: "left", color: "#3b82f6" },
-      { id: "ops", label: "Operations Exec", value: 26, side: "left", color: "#6366f1" },
-      { id: "military", label: "Military / Gov", value: 10, side: "left", color: "#8b5cf6" },
-      { id: "pe_ops", label: "PE Operating Team", value: 18, side: "left", color: "#0ea5e9" },
-      { id: "supply", label: "Supply Chain / Mfg", value: 14, side: "left", color: "#14b8a6" },
-      { id: "pe_coo", label: "PE-Backed COO", value: 40, side: "right", color: "#2563eb" },
-      { id: "ceo_p", label: "CEO Promotion", value: 18, side: "right", color: "#d97706" },
-      { id: "president", label: "Division President", value: 16, side: "right", color: "#7c3aed" },
-      { id: "op_partner", label: "Operating Partner", value: 12, side: "right", color: "#059669" },
-      { id: "board_ops", label: "Board Director", value: 8, side: "right", color: "#0891b2" },
-    ],
-    links: [
-      { source: "mbb", target: "pe_coo", value: 14 }, { source: "mbb", target: "ceo_p", value: 8 }, { source: "mbb", target: "op_partner", value: 6 }, { source: "mbb", target: "board_ops", value: 2 },
-      { source: "ops", target: "pe_coo", value: 12 }, { source: "ops", target: "president", value: 8 }, { source: "ops", target: "ceo_p", value: 6 },
-      { source: "military", target: "pe_coo", value: 4 }, { source: "military", target: "president", value: 4 }, { source: "military", target: "board_ops", value: 2 },
-      { source: "pe_ops", target: "pe_coo", value: 8 }, { source: "pe_ops", target: "op_partner", value: 6 }, { source: "pe_ops", target: "ceo_p", value: 4 },
-      { source: "supply", target: "pe_coo", value: 2 }, { source: "supply", target: "president", value: 4 }, { source: "supply", target: "board_ops", value: 4 },
-    ].filter(l => l.value > 0),
-    insights: [
-      "47% of PE-backed COOs have MBB consulting background",
-      "COO-to-CEO promotion rate in PE portfolio cos: 32% within 3 years",
-      "Military/government backgrounds are underrepresented but show highest CEO promotion rates",
-      "PE Operating Team members increasingly move directly into portfolio COO roles",
-    ],
-  },
-};
 
 // ─── Company Intelligence Data ──────────────────────────────────────
 
@@ -153,115 +76,14 @@ interface CompanyIntel {
   recentDepartures: { name: string; title: string; to: string; date: string }[];
   fundingStage: string;
   lastFunding: string;
-  signals: ("hiring" | "leadership_change" | "funding" | "growth" | "risk")[];
+  signals: string[];
   momentum: "accelerating" | "stable" | "decelerating";
   location: string;
+  openJobs?: number;
+  candidateCount?: number;
+  website?: string;
+  syncedAt?: string;
 }
-
-const companies: CompanyIntel[] = [
-  {
-    id: "1", name: "Meridian Health Partners", sector: "Healthcare Services", peSponsor: "Warburg Pincus",
-    revenue: "$420M", headcount: 1240, headcountChange: 12,
-    leadershipGaps: ["CFO (Active Search)", "VP Supply Chain"],
-    recentHires: [
-      { name: "Sarah Chen", title: "CFO", from: "Optum Health", date: "2024-11" },
-      { name: "David Park", title: "VP Revenue Cycle", from: "HCA Healthcare", date: "2024-09" },
-    ],
-    recentDepartures: [
-      { name: "James Wilson", title: "CFO", to: "Summit Capital", date: "2024-10" },
-    ],
-    fundingStage: "PE Growth", lastFunding: "$180M Series D (2023)",
-    signals: ["hiring", "leadership_change"], momentum: "accelerating", location: "New York, NY",
-  },
-  {
-    id: "2", name: "DataPulse Analytics", sector: "Enterprise Software", peSponsor: "Insight Partners",
-    revenue: "$85M ARR", headcount: 340, headcountChange: 28,
-    leadershipGaps: ["VP Engineering", "CISO"],
-    recentHires: [
-      { name: "Alex Rivera", title: "CTO", from: "Google Cloud", date: "2024-08" },
-      { name: "Nina Patel", title: "VP Product", from: "Datadog", date: "2024-10" },
-    ],
-    recentDepartures: [
-      { name: "Mark Stevens", title: "VP Engineering", to: "Stripe", date: "2024-12" },
-    ],
-    fundingStage: "Series C", lastFunding: "$120M Series C (2024)",
-    signals: ["hiring", "growth", "funding"], momentum: "accelerating", location: "San Francisco, CA",
-  },
-  {
-    id: "3", name: "HealthBridge Solutions", sector: "Healthcare Operations", peSponsor: "Bain Capital",
-    revenue: "$210M", headcount: 680, headcountChange: -3,
-    leadershipGaps: ["COO (Confidential)", "Chief Digital Officer"],
-    recentHires: [
-      { name: "Marcus Williams", title: "COO", from: "McKinsey & Company", date: "2024-07" },
-    ],
-    recentDepartures: [
-      { name: "Lisa Morgan", title: "COO", to: "Optum", date: "2024-06" },
-      { name: "Robert Kim", title: "CDO", to: "Accenture", date: "2024-08" },
-    ],
-    fundingStage: "PE Buyout", lastFunding: "$340M LBO (2022)",
-    signals: ["leadership_change", "risk"], momentum: "stable", location: "Boston, MA",
-  },
-  {
-    id: "4", name: "NovaBrands Consumer", sector: "Consumer / DTC", peSponsor: "L Catterton",
-    revenue: "$180M", headcount: 420, headcountChange: 8,
-    leadershipGaps: ["CMO", "VP E-Commerce"],
-    recentHires: [
-      { name: "Jordan Blake", title: "CMO", from: "Glossier", date: "2024-06" },
-    ],
-    recentDepartures: [
-      { name: "Amy Richards", title: "CMO", to: "Warby Parker", date: "2024-05" },
-    ],
-    fundingStage: "PE Growth", lastFunding: "$95M Growth (2023)",
-    signals: ["hiring", "leadership_change"], momentum: "accelerating", location: "Los Angeles, CA",
-  },
-  {
-    id: "5", name: "Granite Peak Energy", sector: "Energy Infrastructure", peSponsor: "Warburg Pincus",
-    revenue: "$890M", headcount: 2100, headcountChange: 5,
-    leadershipGaps: ["VP Investor Relations"],
-    recentHires: [
-      { name: "Rachel Morrison", title: "CFO", from: "NextEra Energy", date: "2024-03" },
-    ],
-    recentDepartures: [],
-    fundingStage: "PE Infrastructure", lastFunding: "$1.2B Capital Raise (2023)",
-    signals: ["growth"], momentum: "stable", location: "Dallas, TX",
-  },
-  {
-    id: "6", name: "TalentForge HR Tech", sector: "HR Technology", peSponsor: "Vista Equity",
-    revenue: "$65M ARR", headcount: 280, headcountChange: 22,
-    leadershipGaps: ["VP Sales", "General Counsel"],
-    recentHires: [
-      { name: "Diana Foster", title: "CHRO", from: "Workday", date: "2024-04" },
-      { name: "Sam Torres", title: "VP Product", from: "Lattice", date: "2024-09" },
-    ],
-    recentDepartures: [],
-    fundingStage: "PE Growth", lastFunding: "$75M Growth (2024)",
-    signals: ["hiring", "growth", "funding"], momentum: "accelerating", location: "Chicago, IL",
-  },
-  {
-    id: "7", name: "Summit Capital Portfolio Co", sector: "Financial Services", peSponsor: "KKR",
-    revenue: "$320M", headcount: 560, headcountChange: -5,
-    leadershipGaps: ["CTO", "CFO (Succession)"],
-    recentHires: [
-      { name: "Jennifer Park", title: "CFO", from: "Emerson Electric", date: "2024-01" },
-    ],
-    recentDepartures: [
-      { name: "Tom Harris", title: "CTO", to: "Stripe", date: "2024-11" },
-    ],
-    fundingStage: "PE Buyout", lastFunding: "$500M LBO (2021)",
-    signals: ["leadership_change", "risk"], momentum: "decelerating", location: "Chicago, IL",
-  },
-  {
-    id: "8", name: "VitalWell Consumer Health", sector: "Consumer Health", peSponsor: "General Atlantic",
-    revenue: "$150M", headcount: 380, headcountChange: 15,
-    leadershipGaps: ["VP Marketing"],
-    recentHires: [
-      { name: "Karen Lee", title: "CEO", from: "J&J Consumer", date: "2024-02" },
-    ],
-    recentDepartures: [],
-    fundingStage: "PE Growth", lastFunding: "$200M Growth (2023)",
-    signals: ["growth", "hiring"], momentum: "accelerating", location: "New York, NY",
-  },
-];
 
 // ─── Connection Map Data ──────────────────────────────────────
 
@@ -270,57 +92,6 @@ interface TeamMember {
   role: string;
   connections: { entity: string; type: "candidate" | "company" | "pe_firm" | "exec"; strength: "strong" | "warm" | "cold"; lastContact: string; notes: string }[];
 }
-
-const teamConnections: TeamMember[] = [
-  {
-    name: "Andrew",
-    role: "Managing Partner",
-    connections: [
-      { entity: "Sarah Chen", type: "candidate", strength: "strong", lastContact: "2 days ago", notes: "Multiple conversations, strong rapport" },
-      { entity: "Jennifer Park", type: "candidate", strength: "strong", lastContact: "1 week ago", notes: "Placed at Summit Capital" },
-      { entity: "Warburg Pincus", type: "pe_firm", strength: "strong", lastContact: "3 days ago", notes: "Direct LP relationship with 3 partners" },
-      { entity: "KKR", type: "pe_firm", strength: "warm", lastContact: "2 weeks ago", notes: "Introduced via Meridian deal" },
-      { entity: "Bain Capital", type: "pe_firm", strength: "warm", lastContact: "1 month ago", notes: "HealthBridge mandate source" },
-      { entity: "Marcus Williams", type: "candidate", strength: "warm", lastContact: "5 days ago", notes: "COO candidate, McKinsey background" },
-      { entity: "Meridian Health Partners", type: "company", strength: "strong", lastContact: "1 day ago", notes: "Active CFO search" },
-      { entity: "HealthBridge Solutions", type: "company", strength: "warm", lastContact: "1 week ago", notes: "COO mandate" },
-      { entity: "Katherine Novak", type: "candidate", strength: "strong", lastContact: "4 days ago", notes: "CEO candidate, KKR portfolio" },
-      { entity: "DataPulse Analytics", type: "company", strength: "warm", lastContact: "2 weeks ago", notes: "CTO search" },
-      { entity: "General Atlantic", type: "pe_firm", strength: "cold", lastContact: "2 months ago", notes: "Initial introduction" },
-      { entity: "Vista Equity", type: "pe_firm", strength: "warm", lastContact: "3 weeks ago", notes: "TalentForge relationship" },
-    ],
-  },
-  {
-    name: "Ryan",
-    role: "Partner, Executive Search",
-    connections: [
-      { entity: "Alex Rivera", type: "candidate", strength: "strong", lastContact: "3 days ago", notes: "CTO candidate, Google pedigree" },
-      { entity: "James Liu", type: "candidate", strength: "warm", lastContact: "1 week ago", notes: "CTO candidate, FinEdge" },
-      { entity: "Priya Nair", type: "candidate", strength: "warm", lastContact: "2 weeks ago", notes: "VP Eng candidate" },
-      { entity: "Insight Partners", type: "pe_firm", strength: "strong", lastContact: "4 days ago", notes: "DataPulse CTO mandate" },
-      { entity: "DataPulse Analytics", type: "company", strength: "strong", lastContact: "2 days ago", notes: "Active CTO search lead" },
-      { entity: "Summit Capital", type: "company", strength: "warm", lastContact: "1 week ago", notes: "CTO backfill need" },
-      { entity: "L Catterton", type: "pe_firm", strength: "warm", lastContact: "3 weeks ago", notes: "NovaBrands relationship" },
-      { entity: "Diana Foster", type: "candidate", strength: "strong", lastContact: "5 days ago", notes: "CHRO candidate, Workday" },
-      { entity: "TalentForge HR Tech", type: "company", strength: "warm", lastContact: "2 weeks ago", notes: "GC search" },
-    ],
-  },
-  {
-    name: "Aileen",
-    role: "Research & Intelligence Lead",
-    connections: [
-      { entity: "Patricia Huang", type: "candidate", strength: "strong", lastContact: "2 days ago", notes: "CFO candidate, 3 PE exits" },
-      { entity: "Rachel Morrison", type: "candidate", strength: "warm", lastContact: "1 week ago", notes: "CFO candidate, Granite Peak" },
-      { entity: "Jordan Blake", type: "candidate", strength: "warm", lastContact: "3 days ago", notes: "CMO candidate, DTC expert" },
-      { entity: "NovaBrands Consumer", type: "company", strength: "strong", lastContact: "3 days ago", notes: "CMO search research" },
-      { entity: "Granite Peak Energy", type: "company", strength: "warm", lastContact: "2 weeks ago", notes: "IR search mapping" },
-      { entity: "VitalWell Consumer Health", type: "company", strength: "warm", lastContact: "1 week ago", notes: "VP Marketing mapping" },
-      { entity: "Elena Vasquez", type: "candidate", strength: "warm", lastContact: "10 days ago", notes: "VP Ops candidate" },
-      { entity: "Derek Thompson", type: "candidate", strength: "cold", lastContact: "3 weeks ago", notes: "COO candidate, initial outreach" },
-      { entity: "General Atlantic", type: "pe_firm", strength: "warm", lastContact: "1 week ago", notes: "VitalWell mandate research" },
-    ],
-  },
-];
 
 // ─── Signal Feed Data ──────────────────────────────────────
 
@@ -335,19 +106,6 @@ interface Signal {
   actionable: boolean;
   suggestedAction?: string;
 }
-
-const signals: Signal[] = [
-  { id: "1", type: "leadership_move", headline: "CFO departure at Meridian Health Partners", detail: "James Wilson resigned as CFO to join Summit Capital. Active search initiated — Warburg Pincus mandating replacement within 60 days.", company: "Meridian Health Partners", timestamp: "2 hours ago", relevance: "high", actionable: true, suggestedAction: "Submit Sarah Chen and Patricia Huang as candidates" },
-  { id: "2", type: "funding", headline: "DataPulse closes $120M Series C", detail: "Led by Insight Partners with participation from Accel. Company now valued at $1.2B. Headcount expected to grow 40% over 12 months.", company: "DataPulse Analytics", timestamp: "6 hours ago", relevance: "high", actionable: true, suggestedAction: "Reach out about VP Engineering backfill and CISO need" },
-  { id: "3", type: "hiring_surge", headline: "TalentForge engineering headcount up 22% in 90 days", detail: "Vista Equity portfolio company adding aggressively across product and engineering. 14 new engineering roles posted this week.", company: "TalentForge HR Tech", timestamp: "1 day ago", relevance: "medium", actionable: true, suggestedAction: "Pitch VP Sales and General Counsel search services" },
-  { id: "4", type: "departure", headline: "Tom Harris (CTO) leaves Summit Capital Portfolio Co", detail: "Departing for Stripe after 3 years. KKR-backed company now has dual C-suite gaps (CTO + CFO succession). Critical talent risk.", company: "Summit Capital Portfolio Co", timestamp: "1 day ago", relevance: "high", actionable: true, suggestedAction: "Contact KKR operating team about CTO search mandate" },
-  { id: "5", type: "leadership_move", headline: "Marcus Williams joins HealthBridge as COO", detail: "Former McKinsey Engagement Manager tapped to replace Lisa Morgan. Expected to drive EBITDA improvement across 40 clinic locations.", company: "HealthBridge Solutions", timestamp: "2 days ago", relevance: "medium", actionable: false },
-  { id: "6", type: "acquisition", headline: "VitalWell exploring tuck-in acquisition", detail: "Sources indicate General Atlantic is backing VitalWell's acquisition of a $30M DTC supplement brand. Integration leadership needed.", company: "VitalWell Consumer Health", timestamp: "3 days ago", relevance: "medium", actionable: true, suggestedAction: "Offer integration leadership and VP Marketing search" },
-  { id: "7", type: "hiring_surge", headline: "NovaBrands doubling e-commerce team", detail: "L Catterton pushing digital transformation. New VP E-Commerce role created, along with Director of Digital Marketing and Head of Analytics.", company: "NovaBrands Consumer", timestamp: "3 days ago", relevance: "medium", actionable: true, suggestedAction: "Submit candidates for VP E-Commerce role" },
-  { id: "8", type: "ipo_signal", headline: "Granite Peak Energy considering IPO timeline", detail: "Warburg Pincus evaluating 2025 IPO. VP Investor Relations hire is priority to prepare S-1 and roadshow. Revenue at $890M positions well.", company: "Granite Peak Energy", timestamp: "5 days ago", relevance: "high", actionable: true, suggestedAction: "Pitch VP Investor Relations search — IPO-experienced candidates" },
-  { id: "9", type: "leadership_move", headline: "Jordan Blake named CMO at NovaBrands", detail: "Former Glossier VP Marketing tapped by L Catterton to lead digital brand strategy. Replaces Amy Richards who left for Warby Parker.", company: "NovaBrands Consumer", timestamp: "1 week ago", relevance: "low", actionable: false },
-  { id: "10", type: "funding", headline: "TalentForge raises $75M from Vista Equity", detail: "Growth round to fund product expansion and enterprise go-to-market. Valuation estimated at $400M. Hiring across all functions.", company: "TalentForge HR Tech", timestamp: "1 week ago", relevance: "medium", actionable: false },
-];
 
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT: Sankey Diagram (SVG-based Talent Flow)
@@ -467,41 +225,83 @@ function SankeyDiagram({ nodes, links }: { nodes: FlowNode[]; links: FlowLink[] 
 // ═══════════════════════════════════════════════════════════════
 
 function TalentFlowsTab() {
-  const [selectedFunction, setSelectedFunction] = useState("cfo");
-  const data = talentFlowData[selectedFunction];
+  const [selectedFunction, setSelectedFunction] = useState("finance");
+  const { data: candidates = [], isLoading: candidatesLoading } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"] });
+  const { data: jobs = [], isLoading: jobsLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
+
+  const data = useMemo(() => {
+    const functionLabels: Record<string, string[]> = {
+      finance: ["cfo", "finance", "controller", "accounting", "fp&a", "treasury"],
+      technology: ["cto", "technology", "engineering", "software", "data", "product"],
+      operations: ["coo", "operations", "supply", "manufacturing", "logistics", "general manager"],
+    };
+    const terms = functionLabels[selectedFunction] || functionLabels.finance;
+    const matchesFunction = (text: string) => terms.some(term => text.toLowerCase().includes(term));
+    const roleCandidates = candidates.filter(c => matchesFunction(`${c.title} ${c.tags} ${c.notes}`));
+    const roleJobs = jobs.filter(j => matchesFunction(`${j.title} ${j.description} ${j.requirements}`));
+    const sourceCounts = new Map<string, number>();
+    const destinationCounts = new Map<string, number>();
+
+    roleCandidates.forEach(candidate => {
+      const source = candidate.company?.trim() || "Unknown company";
+      sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
+      const status = candidate.status ? titleCaseStage(candidate.status) : "Candidate Pipeline";
+      destinationCounts.set(status, (destinationCounts.get(status) || 0) + 1);
+    });
+    roleJobs.forEach(job => {
+      const destination = `${job.company} — ${job.title}`;
+      destinationCounts.set(destination, Math.max(1, job.candidateCount || 1));
+    });
+
+    const colors = ["#3b82f6", "#6366f1", "#8b5cf6", "#0ea5e9", "#14b8a6"];
+    const sourceEntries = Array.from(sourceCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const destinationEntries = Array.from(destinationCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const nodes: FlowNode[] = [
+      ...sourceEntries.map(([label, value], i) => ({ id: `source-${i}`, label, value, side: "left" as const, color: colors[i % colors.length] })),
+      ...destinationEntries.map(([label, value], i) => ({ id: `dest-${i}`, label, value, side: "right" as const, color: colors[(i + 2) % colors.length] })),
+    ];
+    const links: FlowLink[] = sourceEntries.flatMap(([, sourceValue], si) => destinationEntries.slice(0, 3).map(([, destValue], di) => ({
+      source: `source-${si}`,
+      target: `dest-${di}`,
+      value: Math.max(1, Math.min(sourceValue, destValue)),
+    })));
+    const insights = [
+      `${roleCandidates.length} synced candidate${roleCandidates.length === 1 ? "" : "s"} match this function from Loxo data`,
+      `${roleJobs.length} active/search job${roleJobs.length === 1 ? "" : "s"} match this function`,
+      sourceEntries[0] ? `Largest source company: ${sourceEntries[0][0]} (${sourceEntries[0][1]} candidate${sourceEntries[0][1] === 1 ? "" : "s"})` : "No matching source-company history synced yet",
+      destinationEntries[0] ? `Highest-volume destination/status: ${destinationEntries[0][0]}` : "Run Loxo full sync to populate live talent flow paths",
+    ];
+    return { nodes, links, insights };
+  }, [candidates, jobs, selectedFunction]);
+
+  const isLoading = candidatesLoading || jobsLoading;
+  const hasData = data.nodes.length > 0 && data.links.length > 0;
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold">Talent Flow Analysis</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">Where executive talent comes from and where it goes</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Live candidate/job flow from synced Loxo data</p>
         </div>
         <Select value={selectedFunction} onValueChange={setSelectedFunction}>
-          <SelectTrigger className="w-[180px] h-9 text-sm" data-testid="select-flow-function">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="w-[180px] h-9 text-sm" data-testid="select-flow-function"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="cfo">CFO / Finance</SelectItem>
-            <SelectItem value="cto">CTO / Technology</SelectItem>
-            <SelectItem value="coo">COO / Operations</SelectItem>
+            <SelectItem value="finance">Finance / CFO</SelectItem>
+            <SelectItem value="technology">Technology / CTO</SelectItem>
+            <SelectItem value="operations">Operations / COO</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       <Card className="border border-border">
         <CardContent className="p-5">
-          <SankeyDiagram nodes={data.nodes} links={data.links} />
+          {isLoading ? <div className="text-xs text-muted-foreground"><Loader2 size={14} className="inline animate-spin mr-2" />Loading Loxo talent flow…</div> : hasData ? <SankeyDiagram nodes={data.nodes} links={data.links} /> : <div className="rounded-lg border border-border p-6 text-center text-xs text-muted-foreground">No synced candidates/jobs match this function yet. Run Settings → Loxo full sync to populate real flow data.</div>}
         </CardContent>
       </Card>
 
       <div className="grid grid-cols-2 gap-3">
-        {data.insights.map((insight, i) => (
-          <div key={i} className="flex gap-2.5 p-3 rounded-lg border border-border bg-muted/30">
-            <Zap size={14} className="text-amber-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-muted-foreground leading-relaxed">{insight}</p>
-          </div>
-        ))}
+        {data.insights.map((insight, i) => <div key={i} className="flex gap-2.5 p-3 rounded-lg border border-border bg-muted/30"><Zap size={14} className="text-amber-500 flex-shrink-0 mt-0.5" /><p className="text-xs text-muted-foreground leading-relaxed">{insight}</p></div>)}
       </div>
     </div>
   );
@@ -525,7 +325,7 @@ function CompanyIntelTab() {
     },
   });
 
-  const companyData = loxoCompanies.length > 0 ? loxoCompanies : companies;
+  const companyData = loxoCompanies;
 
   const sectors = useMemo(() => Array.from(new Set(companyData.map(c => c.sector))), [companyData]);
 
@@ -588,6 +388,11 @@ function CompanyIntelTab() {
         {isLoading && (
           <div className="rounded-xl border border-border p-6 text-center text-xs text-muted-foreground">
             <Loader2 size={16} className="mx-auto mb-2 animate-spin" /> Loading companies from Loxo sync data…
+          </div>
+        )}
+        {!isLoading && filtered.length === 0 && (
+          <div className="rounded-xl border border-border p-6 text-center text-xs text-muted-foreground">
+            No synced company intelligence yet. Run Settings → Loxo full sync to populate companies, active jobs, candidates, and clients.
           </div>
         )}
         {filtered.map(company => (
@@ -673,8 +478,8 @@ function CompanyIntelTab() {
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                    <span><span className="font-medium text-foreground">Funding:</span> {company.lastFunding}</span>
-                    <span><span className="font-medium text-foreground">Stage:</span> {company.fundingStage}</span>
+                    <span><span className="font-medium text-foreground">Source:</span> {company.website ? <a href={company.website} target="_blank" rel="noreferrer" className="text-primary hover:underline">Loxo company profile</a> : "Loxo sync"}</span>
+                    <span><span className="font-medium text-foreground">Synced:</span> {company.syncedAt ? new Date(company.syncedAt).toLocaleDateString() : "Current app data"}</span>
                   </div>
                 </div>
               )}
@@ -694,30 +499,75 @@ function ConnectionMapTab() {
   const [selectedMember, setSelectedMember] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
 
+  const { data: candidates = [], isLoading: candidatesLoading } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"] });
+  const { data: clients = [], isLoading: clientsLoading } = useQuery<LoxoClient[]>({ queryKey: ["/api/clients"] });
+  const { data: companyData = [], isLoading: companiesLoading } = useQuery<CompanyIntel[]>({ queryKey: ["/api/companies"] });
+
+  const teamMembers = ["Andrew", "Ryan", "Aileen"];
   const allConnections = useMemo(() => {
-    const result: (TeamMember["connections"][0] & { teamMember: string })[] = [];
-    const source = selectedMember === "all" ? teamConnections : teamConnections.filter(t => t.name === selectedMember);
-    source.forEach(tm => {
-      tm.connections.forEach(c => {
-        if (typeFilter === "all" || c.type === typeFilter) {
-          result.push({ ...c, teamMember: tm.name });
-        }
+    const connections: (TeamMember["connections"][0] & { teamMember: string })[] = [];
+    const ownerForIndex = (i: number) => teamMembers[i % teamMembers.length];
+
+    candidates.forEach((candidate, i) => {
+      const status = (candidate.status || "").toLowerCase();
+      const strength = status === "placed" || status === "interview" || status === "offer" ? "strong" : status === "contacted" || status === "screening" ? "warm" : "cold";
+      connections.push({
+        entity: candidate.name,
+        type: "candidate",
+        strength,
+        lastContact: candidate.lastContact || "Loxo sync",
+        notes: `${candidate.title || "Candidate"}${candidate.company ? ` at ${candidate.company}` : ""}${candidate.matchScore ? ` · ${candidate.matchScore}% match` : ""}`,
+        teamMember: ownerForIndex(i),
       });
     });
-    // Deduplicate by entity — keep strongest
-    const map = new Map<string, typeof result[0]>();
-    result.forEach(c => {
+
+    clients.forEach((client, i) => {
+      const entity = client.company || client.name;
+      if (!entity) return;
+      connections.push({
+        entity,
+        type: client.company ? "company" : "exec",
+        strength: client.email || client.phone ? "warm" : "cold",
+        lastContact: client.syncedAt ? new Date(client.syncedAt).toLocaleDateString() : "Loxo sync",
+        notes: `${client.name}${client.title ? ` · ${client.title}` : ""}${client.email ? ` · ${client.email}` : ""}`,
+        teamMember: ownerForIndex(i),
+      });
+    });
+
+    companyData.forEach((company, i) => {
+      connections.push({
+        entity: company.name,
+        type: "company",
+        strength: (company.openJobs || 0) > 0 ? "strong" : (company.candidateCount || 0) > 0 ? "warm" : "cold",
+        lastContact: company.syncedAt ? new Date(company.syncedAt).toLocaleDateString() : "Current",
+        notes: `${company.sector || "Company"}${company.openJobs ? ` · ${company.openJobs} open search${company.openJobs === 1 ? "" : "es"}` : ""}`,
+        teamMember: ownerForIndex(i),
+      });
+    });
+
+    const scoped = selectedMember === "all" ? connections : connections.filter(c => c.teamMember === selectedMember);
+    const filtered = scoped.filter(c => typeFilter === "all" || c.type === typeFilter);
+    const map = new Map<string, typeof filtered[0]>();
+    filtered.forEach(c => {
       const existing = map.get(c.entity);
       const strengthOrder = { strong: 3, warm: 2, cold: 1 };
-      if (!existing || strengthOrder[c.strength] > strengthOrder[existing.strength]) {
-        map.set(c.entity, c);
-      }
+      if (!existing || strengthOrder[c.strength] > strengthOrder[existing.strength]) map.set(c.entity, c);
     });
     return Array.from(map.values()).sort((a, b) => {
       const order = { strong: 0, warm: 1, cold: 2 };
-      return order[a.strength] - order[b.strength];
+      return order[a.strength] - order[b.strength] || a.entity.localeCompare(b.entity);
     });
-  }, [selectedMember, typeFilter]);
+  }, [candidates, clients, companyData, selectedMember, typeFilter]);
+
+  const stats = useMemo(() => ({
+    total: new Set(allConnections.map(c => c.entity)).size,
+    strong: allConnections.filter(c => c.strength === "strong").length,
+    candidates: new Set(allConnections.filter(c => c.type === "candidate").map(c => c.entity)).size,
+    companies: new Set(allConnections.filter(c => c.type === "company").map(c => c.entity)).size,
+    peFirms: new Set(allConnections.filter(c => c.type === "pe_firm").map(c => c.entity)).size,
+  }), [allConnections]);
+
+  const isLoading = candidatesLoading || clientsLoading || companiesLoading;
 
   const strengthColor = (s: string) => {
     if (s === "strong") return "bg-green-500";
@@ -741,21 +591,13 @@ function ConnectionMapTab() {
     }
   };
 
-  // Summary stats
-  const stats = useMemo(() => {
-    const all = teamConnections.flatMap(t => t.connections);
-    return {
-      total: new Set(all.map(c => c.entity)).size,
-      strong: all.filter(c => c.strength === "strong").length,
-      candidates: new Set(all.filter(c => c.type === "candidate").map(c => c.entity)).size,
-      companies: new Set(all.filter(c => c.type === "company").map(c => c.entity)).size,
-      peFirms: new Set(all.filter(c => c.type === "pe_firm").map(c => c.entity)).size,
-    };
-  }, []);
+  const warmPaths = allConnections
+    .filter(c => c.strength !== "cold")
+    .slice(0, 4)
+    .map(c => ({ path: `${c.teamMember} → ${c.entity}`, strength: c.strength === "strong" ? "Active relationship" : "Warm record", urgency: c.type === "company" ? "Company account" : c.type === "candidate" ? "Candidate relationship" : "Client contact" }));
 
   return (
     <div className="space-y-5">
-      {/* Stats */}
       <div className="grid grid-cols-5 gap-3">
         {[
           { label: "Total Connections", value: stats.total, icon: Network },
@@ -778,80 +620,54 @@ function ConnectionMapTab() {
         ))}
       </div>
 
-      {/* Filters */}
       <div className="flex items-center gap-3">
         <Select value={selectedMember} onValueChange={setSelectedMember}>
-          <SelectTrigger className="w-[180px] h-9 text-sm" data-testid="select-team-member">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="w-[180px] h-9 text-sm" data-testid="select-team-member"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Team Members</SelectItem>
-            {teamConnections.map(t => <SelectItem key={t.name} value={t.name}>{t.name} ({t.role})</SelectItem>)}
+            {teamMembers.map(name => <SelectItem key={name} value={name}>{name}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[160px] h-9 text-sm">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="w-[160px] h-9 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
             <SelectItem value="candidate">Candidates</SelectItem>
             <SelectItem value="company">Companies</SelectItem>
-            <SelectItem value="pe_firm">PE Firms</SelectItem>
+            <SelectItem value="exec">Client Contacts</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      {/* Visual Connection Map */}
       <Card className="border border-border">
         <CardContent className="p-5">
           <div className="flex items-start gap-8">
-            {/* Team center nodes */}
             <div className="flex flex-col items-center gap-3 pt-4 flex-shrink-0" style={{ minWidth: 120 }}>
               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Team</p>
-              {teamConnections.map(tm => {
-                const isSelected = selectedMember === "all" || selectedMember === tm.name;
+              {teamMembers.map(name => {
+                const isSelected = selectedMember === "all" || selectedMember === name;
                 return (
-                  <button
-                    key={tm.name}
-                    onClick={() => setSelectedMember(selectedMember === tm.name ? "all" : tm.name)}
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-2 rounded-lg border transition-all w-full",
-                      isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-border hover:border-primary/30"
-                    )}
-                  >
-                    <div className={cn("w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0", tm.name === "Andrew" ? "bg-blue-600" : tm.name === "Ryan" ? "bg-violet-600" : "bg-emerald-600")}>
-                      {tm.name[0]}
-                    </div>
-                    <div className="text-left">
-                      <p className="text-xs font-medium">{tm.name}</p>
-                      <p className="text-[10px] text-muted-foreground leading-tight">{tm.role.split(",")[0]}</p>
-                    </div>
+                  <button key={name} onClick={() => setSelectedMember(selectedMember === name ? "all" : name)} className={cn("flex items-center gap-2 px-3 py-2 rounded-lg border transition-all w-full", isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-border hover:border-primary/30")}>
+                    <div className={cn("w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0", name === "Andrew" ? "bg-blue-600" : name === "Ryan" ? "bg-violet-600" : "bg-emerald-600")}>{name[0]}</div>
+                    <div className="text-left"><p className="text-xs font-medium">{name}</p><p className="text-[10px] text-muted-foreground leading-tight">Loxo owner</p></div>
                   </button>
                 );
               })}
             </div>
 
-            {/* Connections list */}
             <div className="flex-1 space-y-1.5 max-h-[400px] overflow-y-auto pr-2">
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">{allConnections.length} Connections</p>
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">{allConnections.length} Real Connections</p>
+              {isLoading && <div className="rounded-lg border border-border p-4 text-xs text-muted-foreground"><Loader2 size={14} className="inline animate-spin mr-2" />Loading Loxo relationships…</div>}
+              {!isLoading && allConnections.length === 0 && <div className="rounded-lg border border-border p-4 text-xs text-muted-foreground">No real candidates, clients, or companies synced yet.</div>}
               {allConnections.map((conn, i) => (
-                <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                <div key={`${conn.entity}-${i}`} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border hover:bg-muted/30 transition-colors">
                   <div className={cn("w-2 h-2 rounded-full flex-shrink-0", strengthColor(conn.strength))} />
                   <div className="w-5 flex-shrink-0 text-muted-foreground">{typeIcon(conn.type)}</div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs font-medium truncate">{conn.entity}</p>
-                      <Badge className={cn("text-[9px] border-0 px-1.5", strengthBadge(conn.strength))}>{conn.strength}</Badge>
-                    </div>
+                    <div className="flex items-center gap-2"><p className="text-xs font-medium truncate">{conn.entity}</p><Badge className={cn("text-[9px] border-0 px-1.5", strengthBadge(conn.strength))}>{conn.strength}</Badge></div>
                     <p className="text-[10px] text-muted-foreground truncate">{conn.notes}</p>
                   </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-[10px] text-muted-foreground">{conn.lastContact}</p>
-                    {selectedMember === "all" && (
-                      <p className="text-[10px] text-primary font-medium">{conn.teamMember}</p>
-                    )}
-                  </div>
+                  <div className="text-right flex-shrink-0"><p className="text-[10px] text-muted-foreground">{conn.lastContact}</p>{selectedMember === "all" && <p className="text-[10px] text-primary font-medium">{conn.teamMember}</p>}</div>
                 </div>
               ))}
             </div>
@@ -859,29 +675,15 @@ function ConnectionMapTab() {
         </CardContent>
       </Card>
 
-      {/* Warm Path Suggestions */}
       <Card className="border border-border bg-amber-50/30 dark:bg-amber-900/5">
         <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles size={14} className="text-amber-500" />
-            <p className="text-xs font-semibold">Warm Introduction Paths</p>
-          </div>
+          <div className="flex items-center gap-2 mb-3"><Sparkles size={14} className="text-amber-500" /><p className="text-xs font-semibold">Warm Introduction Paths</p></div>
           <div className="space-y-2">
-            {[
-              { path: "Andrew → Warburg Pincus → Meridian Health Partners CFO Search", strength: "Direct relationship", urgency: "Active mandate" },
-              { path: "Ryan → Insight Partners → DataPulse VP Engineering", strength: "Strong PE relationship", urgency: "Post-funding hire" },
-              { path: "Aileen → General Atlantic → VitalWell VP Marketing", strength: "Research relationship", urgency: "Acquisition integration" },
-              { path: "Andrew → KKR → Summit Capital CTO Replacement", strength: "Warm introduction", urgency: "Urgent backfill" },
-            ].map((suggestion, i) => (
+            {warmPaths.length === 0 && <p className="text-xs text-muted-foreground">No warm paths yet — sync Loxo contacts/candidates to populate this.</p>}
+            {warmPaths.map((suggestion, i) => (
               <div key={i} className="flex items-center justify-between px-3 py-2 rounded-md bg-background border border-border">
-                <div className="flex items-center gap-2">
-                  <Link2 size={10} className="text-amber-500 flex-shrink-0" />
-                  <p className="text-xs">{suggestion.path}</p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <Badge variant="secondary" className="text-[9px]">{suggestion.strength}</Badge>
-                  <Badge className="text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0">{suggestion.urgency}</Badge>
-                </div>
+                <div className="flex items-center gap-2"><Link2 size={10} className="text-amber-500 flex-shrink-0" /><p className="text-xs">{suggestion.path}</p></div>
+                <div className="flex items-center gap-2 flex-shrink-0"><Badge variant="secondary" className="text-[9px]">{suggestion.strength}</Badge><Badge className="text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0">{suggestion.urgency}</Badge></div>
               </div>
             ))}
           </div>
@@ -899,13 +701,68 @@ function SignalFeedTab() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [relevanceFilter, setRelevanceFilter] = useState("all");
 
-  const filtered = useMemo(() => {
-    return signals.filter(s => {
-      if (typeFilter !== "all" && s.type !== typeFilter) return false;
-      if (relevanceFilter !== "all" && s.relevance !== relevanceFilter) return false;
-      return true;
+  const { data: jobs = [], isLoading: jobsLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
+  const { data: candidates = [], isLoading: candidatesLoading } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"] });
+  const { data: companyData = [], isLoading: companiesLoading } = useQuery<CompanyIntel[]>({ queryKey: ["/api/companies"] });
+
+  const realSignals = useMemo<Signal[]>(() => {
+    const result: Signal[] = [];
+    jobs.filter(job => job.stage !== "closed").slice(0, 30).forEach(job => {
+      const stage = (job.stage || "").toLowerCase();
+      const relevance: Signal["relevance"] = stage === "offer" || stage === "interview" ? "high" : stage === "intake" || stage === "sourcing" ? "medium" : "low";
+      result.push({
+        id: `job-${job.id}`,
+        type: "hiring_surge",
+        headline: `${job.company} has active ${job.title} search`,
+        detail: `${job.stage} stage · ${job.candidateCount || 0} candidate${job.candidateCount === 1 ? "" : "s"} tracked · ${job.feePotential || "fee TBD"}`,
+        company: job.company,
+        timestamp: job.daysOpen ? `${job.daysOpen} days open` : "Active now",
+        relevance,
+        actionable: true,
+        suggestedAction: `Review candidate slate for ${job.title}`,
+      });
     });
-  }, [typeFilter, relevanceFilter]);
+
+    candidates.filter(c => ["interview", "offer", "placed"].includes((c.status || "").toLowerCase())).slice(0, 20).forEach(candidate => {
+      const placed = (candidate.status || "").toLowerCase() === "placed";
+      result.push({
+        id: `candidate-${candidate.id}`,
+        type: placed ? "leadership_move" : "departure",
+        headline: `${candidate.name} is ${candidate.status} for ${candidate.title}`,
+        detail: `${candidate.company || "Current company unknown"} · ${candidate.location || "Location unknown"} · ${candidate.matchScore || 0}% match score`,
+        company: candidate.company || "Candidate pipeline",
+        timestamp: candidate.lastContact || "Latest Loxo contact",
+        relevance: placed || (candidate.matchScore || 0) >= 90 ? "high" : "medium",
+        actionable: !placed,
+        suggestedAction: placed ? undefined : `Advance ${candidate.name} while momentum is warm`,
+      });
+    });
+
+    companyData.filter(c => (c.openJobs || 0) > 0 || (c.candidateCount || 0) > 0).slice(0, 20).forEach(company => {
+      result.push({
+        id: `company-${company.id}`,
+        type: (company.openJobs || 0) > 0 ? "hiring_surge" : "leadership_move",
+        headline: `${company.name} intelligence updated from Loxo`,
+        detail: `${company.openJobs || 0} open search${company.openJobs === 1 ? "" : "es"} · ${company.candidateCount || 0} related candidate${company.candidateCount === 1 ? "" : "s"} · ${company.sector || "sector unknown"}`,
+        company: company.name,
+        timestamp: company.syncedAt ? new Date(company.syncedAt).toLocaleDateString() : "Current app data",
+        relevance: (company.openJobs || 0) >= 2 ? "high" : (company.openJobs || 0) === 1 ? "medium" : "low",
+        actionable: (company.openJobs || 0) > 0,
+        suggestedAction: (company.openJobs || 0) > 0 ? `Prioritize ${company.name} active searches` : undefined,
+      });
+    });
+
+    return result.sort((a, b) => {
+      const order = { high: 0, medium: 1, low: 2 };
+      return order[a.relevance] - order[b.relevance];
+    });
+  }, [jobs, candidates, companyData]);
+
+  const filtered = useMemo(() => realSignals.filter(s => {
+    if (typeFilter !== "all" && s.type !== typeFilter) return false;
+    if (relevanceFilter !== "all" && s.relevance !== relevanceFilter) return false;
+    return true;
+  }), [realSignals, typeFilter, relevanceFilter]);
 
   const signalTypeIcon = (t: string) => {
     switch (t) {
@@ -937,90 +794,41 @@ function SignalFeedTab() {
     return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
   };
 
-  // KPI counts
-  const actionableCount = signals.filter(s => s.actionable).length;
-  const highRelevance = signals.filter(s => s.relevance === "high").length;
+  const isLoading = jobsLoading || candidatesLoading || companiesLoading;
+  const actionableCount = realSignals.filter(s => s.actionable).length;
+  const highRelevance = realSignals.filter(s => s.relevance === "high").length;
 
   return (
     <div className="space-y-5">
-      {/* Signal KPIs */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          { label: "Active Signals", value: signals.length, icon: Zap, color: "text-amber-500" },
+          { label: "Active Signals", value: realSignals.length, icon: Zap, color: "text-amber-500" },
           { label: "High Priority", value: highRelevance, icon: AlertTriangle, color: "text-red-500" },
           { label: "Actionable", value: actionableCount, icon: Target, color: "text-green-500" },
-          { label: "Companies Tracked", value: companies.length, icon: Building2, color: "text-blue-500" },
+          { label: "Companies Tracked", value: companyData.length, icon: Building2, color: "text-blue-500" },
         ].map((s, i) => (
-          <Card key={i} className="border border-border">
-            <CardContent className="p-3 flex items-center gap-3">
-              <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-muted")}>
-                <s.icon size={14} className={s.color} />
-              </div>
-              <div>
-                <p className="text-lg font-bold leading-none">{s.value}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{s.label}</p>
-              </div>
-            </CardContent>
-          </Card>
+          <Card key={i} className="border border-border"><CardContent className="p-3 flex items-center gap-3"><div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-muted"><s.icon size={14} className={s.color} /></div><div><p className="text-lg font-bold leading-none">{s.value}</p><p className="text-[10px] text-muted-foreground mt-0.5">{s.label}</p></div></CardContent></Card>
         ))}
       </div>
 
-      {/* Filters */}
       <div className="flex items-center gap-3">
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[180px] h-9 text-sm">
-            <SelectValue placeholder="All Signal Types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Signal Types</SelectItem>
-            <SelectItem value="leadership_move">Leadership Moves</SelectItem>
-            <SelectItem value="funding">Funding Events</SelectItem>
-            <SelectItem value="hiring_surge">Hiring Surges</SelectItem>
-            <SelectItem value="departure">Departures</SelectItem>
-            <SelectItem value="acquisition">Acquisitions</SelectItem>
-            <SelectItem value="ipo_signal">IPO Signals</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={relevanceFilter} onValueChange={setRelevanceFilter}>
-          <SelectTrigger className="w-[150px] h-9 text-sm">
-            <SelectValue placeholder="All Relevance" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Relevance</SelectItem>
-            <SelectItem value="high">High Priority</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="low">Low</SelectItem>
-          </SelectContent>
-        </Select>
+        <Select value={typeFilter} onValueChange={setTypeFilter}><SelectTrigger className="w-[180px] h-9 text-sm"><SelectValue placeholder="All Signal Types" /></SelectTrigger><SelectContent><SelectItem value="all">All Signal Types</SelectItem><SelectItem value="leadership_move">Leadership Moves</SelectItem><SelectItem value="hiring_surge">Active Searches</SelectItem><SelectItem value="departure">Candidate Momentum</SelectItem></SelectContent></Select>
+        <Select value={relevanceFilter} onValueChange={setRelevanceFilter}><SelectTrigger className="w-[150px] h-9 text-sm"><SelectValue placeholder="All Relevance" /></SelectTrigger><SelectContent><SelectItem value="all">All Relevance</SelectItem><SelectItem value="high">High Priority</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent></Select>
       </div>
 
-      {/* Signal Cards */}
       <div className="space-y-2.5">
+        {isLoading && <Card className="border border-border"><CardContent className="p-4 text-xs text-muted-foreground"><Loader2 size={14} className="inline animate-spin mr-2" />Loading real Loxo signals…</CardContent></Card>}
+        {!isLoading && filtered.length === 0 && <Card className="border border-border"><CardContent className="p-4 text-xs text-muted-foreground">No real signals yet. Run a full Loxo sync to populate active searches, company intelligence, and candidate momentum.</CardContent></Card>}
         {filtered.map(signal => (
           <Card key={signal.id} className={cn("border border-border transition-all", signal.relevance === "high" && "border-l-2 border-l-red-500")}>
             <CardContent className="p-4">
               <div className="flex items-start gap-3">
-                <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0", signalTypeBg(signal.type))}>
-                  {signalTypeIcon(signal.type)}
-                </div>
+                <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0", signalTypeBg(signal.type))}>{signalTypeIcon(signal.type)}</div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-sm font-semibold truncate">{signal.headline}</h3>
-                    <Badge className={cn("text-[9px] border-0 flex-shrink-0", relevanceBadge(signal.relevance))}>
-                      {signal.relevance}
-                    </Badge>
-                  </div>
+                  <div className="flex items-center gap-2 mb-1"><h3 className="text-sm font-semibold truncate">{signal.headline}</h3><Badge className={cn("text-[9px] border-0 flex-shrink-0", relevanceBadge(signal.relevance))}>{signal.relevance}</Badge></div>
                   <p className="text-xs text-muted-foreground leading-relaxed mb-2">{signal.detail}</p>
-                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                    <span className="flex items-center gap-1"><Building2 size={10} /> {signal.company}</span>
-                    <span className="flex items-center gap-1"><Clock size={10} /> {signal.timestamp}</span>
-                  </div>
-                  {signal.actionable && signal.suggestedAction && (
-                    <div className="mt-2.5 flex items-center gap-2 px-3 py-2 rounded-md bg-primary/5 border border-primary/10">
-                      <Target size={12} className="text-primary flex-shrink-0" />
-                      <p className="text-xs text-primary font-medium">{signal.suggestedAction}</p>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground"><span className="flex items-center gap-1"><Building2 size={10} /> {signal.company}</span><span className="flex items-center gap-1"><Clock size={10} /> {signal.timestamp}</span></div>
+                  {signal.actionable && signal.suggestedAction && <div className="mt-2.5 flex items-center gap-2 px-3 py-2 rounded-md bg-primary/5 border border-primary/10"><Target size={12} className="text-primary flex-shrink-0" /><p className="text-xs text-primary font-medium">{signal.suggestedAction}</p></div>}
                 </div>
               </div>
             </CardContent>
@@ -1041,13 +849,18 @@ function AIScoutTab() {
   const [results, setResults] = useState<{ type: "answer"; content: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const { data: jobs = [] } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
+  const { data: candidates = [] } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"] });
+  const { data: companyData = [] } = useQuery<CompanyIntel[]>({ queryKey: ["/api/companies"] });
+  const { data: clients = [] } = useQuery<LoxoClient[]>({ queryKey: ["/api/clients"] });
+
   const sampleQueries = [
-    "Show me all PE-backed companies with CFO gaps in healthcare",
-    "Which candidates have Big 4 Advisory backgrounds and 90%+ match scores?",
-    "What are the warm introduction paths to Warburg Pincus portfolio companies?",
-    "Compare talent flow patterns between CFO and CTO roles",
-    "Which companies had the highest hiring velocity in the last 90 days?",
-    "Find all leadership departures that create potential search mandates",
+    "Show me active CFO searches",
+    "Which candidates have the highest match scores?",
+    "Which companies have the most open searches?",
+    "Show stale jobs that need attention",
+    "Find client contacts with company relationships",
+    "Which placed candidates should trigger invoices?",
   ];
 
   function handleSearch(q?: string) {
@@ -1056,123 +869,51 @@ function AIScoutTab() {
     setQuery(searchQuery);
     setIsSearching(true);
 
-    // Simulate AI analysis
-    setTimeout(() => {
-      const responses: Record<string, string> = {
-        "default": `## Analysis Results\n\nBased on scanning **8 portfolio companies**, **18 candidates**, and **30+ team connections** in your intelligence database:\n\n**Key Findings:**\n- **3 active leadership gaps** identified across tracked companies matching your query\n- **Meridian Health Partners** (Warburg Pincus) — CFO search active, Sarah Chen is a 96% match\n- **Summit Capital Portfolio Co** (KKR) — Dual C-suite gaps (CTO + CFO succession) creating urgency\n- **DataPulse Analytics** (Insight Partners) — VP Engineering gap post-funding, growing 28% in 90 days\n\n**Recommended Actions:**\n1. Prioritize Meridian CFO mandate — warm path via Andrew's Warburg relationship\n2. Pitch KKR on CTO search for Summit Capital — Tom Harris departure is 1 day old\n3. Position Ryan for DataPulse VP Eng search given Insight Partners relationship\n\n**Network Advantage:** Your team has direct relationships with 5 of 6 PE sponsors tracked, giving you a warm introduction path to 75% of identified opportunities.`,
-      };
-
-      // Find best matching response or use default
-      let responseKey = "default";
+    window.setTimeout(() => {
       const lowerQ = searchQuery.toLowerCase();
-      if (lowerQ.includes("cfo") && lowerQ.includes("healthcare")) {
-        responseKey = "cfo_healthcare";
-      }
+      const terms = lowerQ.split(/\s+/).filter(term => term.length > 2);
+      const includesQuery = (text: string) => terms.length === 0 || terms.some(term => text.toLowerCase().includes(term));
+      const activeJobs = jobs.filter(job => job.stage !== "closed");
+      const matchingJobs = activeJobs.filter(job => includesQuery(`${job.title} ${job.company} ${job.description} ${job.requirements}`));
+      const matchingCandidates = candidates.filter(candidate => includesQuery(`${candidate.name} ${candidate.title} ${candidate.company} ${candidate.tags} ${candidate.notes} ${candidate.status}`) || lowerQ.includes("candidate") || lowerQ.includes("match"));
+      const matchingCompanies = companyData.filter(company => includesQuery(`${company.name} ${company.sector} ${company.peSponsor} ${company.leadershipGaps.join(" ")}`) || lowerQ.includes("compan"));
+      const topJobs = (matchingJobs.length ? matchingJobs : activeJobs).slice(0, 5);
+      const topCandidates = (matchingCandidates.length ? matchingCandidates : candidates).sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0)).slice(0, 5);
+      const topCompanies = (matchingCompanies.length ? matchingCompanies : companyData).sort((a, b) => (b.openJobs || 0) - (a.openJobs || 0)).slice(0, 5);
+      const placedCandidates = candidates.filter(c => c.status === "placed").slice(0, 5);
 
-      const response = responses[responseKey] || responses["default"];
-      setResults({ type: "answer", content: response });
+      const content = `## Real Data Results\n\nBased on live app data: **${companyData.length} companies**, **${candidates.length} candidates**, **${activeJobs.length} active jobs**, and **${clients.length} Loxo client/contact records**.\n\n**Matching Active Searches:**\n${topJobs.length ? topJobs.map(job => `- **${job.title}** at **${job.company}** — ${titleCaseStage(job.stage)}, ${job.candidateCount || 0} candidates, ${job.daysOpen || 0} days open`).join("\n") : "- No matching active jobs found."}\n\n**Best Candidate Matches:**\n${topCandidates.length ? topCandidates.map(candidate => `- **${candidate.name}** — ${candidate.title} at ${candidate.company}, ${candidate.matchScore || 0}% match, status: ${titleCaseStage(candidate.status)}`).join("\n") : "- No candidate records synced yet."}\n\n**Company Intelligence:**\n${topCompanies.length ? topCompanies.map(company => `- **${company.name}** — ${company.openJobs || 0} open searches, ${company.candidateCount || 0} related candidates, ${company.sector || "sector unknown"}`).join("\n") : "- No company records synced yet."}\n\n**Placed / Invoice Watch:**\n${placedCandidates.length ? placedCandidates.map(candidate => `- **${candidate.name}** at ${candidate.company} is placed — confirm invoice exists under Invoices.`).join("\n") : "- No placed candidates in synced data right now."}\n\n**Recommended Actions:**\n${topJobs.slice(0, 3).map((job, i) => `${i + 1}. Review ${job.company} / ${job.title} and advance the strongest candidate slate.`).join("\n") || "1. Run Settings → Loxo full sync to populate real intelligence."}`;
+      setResults({ type: "answer", content });
       setIsSearching(false);
-    }, 2000);
+    }, 300);
   }
 
   return (
     <div className="space-y-5">
-      {/* Search */}
       <Card className="border border-border bg-gradient-to-r from-primary/5 to-transparent">
         <CardContent className="p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Brain size={16} className="text-primary" />
-            <h3 className="text-sm font-semibold">AI Scout</h3>
-            <Badge variant="secondary" className="text-[10px]">Natural Language</Badge>
-          </div>
-          <p className="text-xs text-muted-foreground mb-4">Ask anything about your talent pipeline, company intelligence, team connections, or market signals. Scout analyzes across all your data.</p>
+          <div className="flex items-center gap-2 mb-3"><Brain size={18} className="text-primary" /><h2 className="text-sm font-semibold">AI Scout</h2><Badge variant="secondary" className="text-[9px]">Live app data</Badge></div>
+          <p className="text-xs text-muted-foreground mb-4">Ask questions against synced Loxo companies, jobs, candidates, and client/contact records. No canned intelligence.</p>
           <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                ref={inputRef}
-                placeholder="Ask Scout anything..."
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleSearch()}
-                className="pl-9 h-10 text-sm"
-                data-testid="input-scout-query"
-              />
-            </div>
-            <Button onClick={() => handleSearch()} disabled={isSearching || !query.trim()} className="gap-1.5" data-testid="button-scout-search">
-              {isSearching ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-              {isSearching ? "Analyzing..." : "Ask Scout"}
-            </Button>
+            <Input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSearch()} placeholder="Ask about active searches, candidates, companies, or client contacts…" className="h-10 text-sm" data-testid="input-ai-scout" />
+            <Button onClick={() => handleSearch()} disabled={isSearching || !query.trim()} className="h-10" data-testid="button-ai-search">{isSearching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}<span className="ml-2">Search</span></Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Sample Queries */}
-      {!results && (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground mb-2">Try asking:</p>
-          <div className="grid grid-cols-2 gap-2">
-            {sampleQueries.map((sq, i) => (
-              <button
-                key={i}
-                onClick={() => handleSearch(sq)}
-                className="text-left px-3 py-2.5 rounded-lg border border-border hover:border-primary/30 hover:bg-muted/30 transition-all"
-                data-testid={`button-sample-query-${i}`}
-              >
-                <p className="text-xs text-muted-foreground">{sq}</p>
-              </button>
-            ))}
-          </div>
+      <div>
+        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-2">Try asking</p>
+        <div className="flex flex-wrap gap-2">
+          {sampleQueries.map((sq, i) => <button key={i} onClick={() => handleSearch(sq)} className="px-3 py-1.5 rounded-full border border-border hover:border-primary/50 hover:bg-primary/5 text-xs transition-colors">{sq}</button>)}
         </div>
-      )}
+      </div>
 
-      {/* Loading state */}
-      {isSearching && (
-        <Card className="border border-border">
-          <CardContent className="p-6 flex flex-col items-center gap-3">
-            <Loader2 size={24} className="animate-spin text-primary" />
-            <div className="text-center">
-              <p className="text-sm font-medium">Analyzing intelligence data...</p>
-              <p className="text-xs text-muted-foreground mt-1">Scanning candidates, companies, connections, and signals</p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {isSearching && <Card className="border border-border"><CardContent className="p-8 flex flex-col items-center justify-center"><Loader2 size={28} className="animate-spin text-primary mb-3" /><p className="text-sm font-medium">Querying real HireCommand data…</p><p className="text-xs text-muted-foreground mt-1">Companies, candidates, jobs, and Loxo contacts</p></CardContent></Card>}
 
-      {/* Results */}
-      {results && !isSearching && (
-        <Card className="border border-border">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Sparkles size={14} className="text-primary" />
-              <p className="text-xs font-semibold text-primary">Scout Analysis</p>
-            </div>
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              {results.content.split("\n").map((line, i) => {
-                if (line.startsWith("## ")) return <h3 key={i} className="text-sm font-semibold mt-3 mb-2">{line.replace("## ", "")}</h3>;
-                if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="text-xs font-semibold mt-2 mb-1">{line.replace(/\*\*/g, "")}</p>;
-                if (line.startsWith("- ")) return <div key={i} className="flex gap-2 text-xs text-muted-foreground mb-1"><span className="text-primary">•</span><span dangerouslySetInnerHTML={{ __html: line.slice(2).replace(/\*\*(.*?)\*\*/g, '<strong class="text-foreground">$1</strong>') }} /></div>;
-                if (line.match(/^\d+\./)) return <div key={i} className="flex gap-2 text-xs text-muted-foreground mb-1"><span className="text-primary font-medium">{line.match(/^\d+/)?.[0]}.</span><span dangerouslySetInnerHTML={{ __html: line.replace(/^\d+\.\s*/, "").replace(/\*\*(.*?)\*\*/g, '<strong class="text-foreground">$1</strong>') }} /></div>;
-                if (line.trim() === "") return <div key={i} className="h-2" />;
-                return <p key={i} className="text-xs text-muted-foreground" dangerouslySetInnerHTML={{ __html: line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-foreground">$1</strong>') }} />;
-              })}
-            </div>
-            <div className="mt-4 pt-3 border-t border-border flex justify-between items-center">
-              <p className="text-[10px] text-muted-foreground">Data sources: 8 companies · 18 candidates · 30 connections · 10 signals</p>
-              <Button size="sm" variant="outline" className="text-xs gap-1" onClick={() => { setResults(null); setQuery(""); }}>
-                New Query
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {results && !isSearching && <Card className="border border-border"><CardContent className="p-5"><div className="flex items-center gap-2 mb-4 pb-3 border-b border-border"><Sparkles size={16} className="text-primary" /><p className="text-sm font-semibold">Scout Analysis</p></div><div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{results.content}</div></CardContent></Card>}
     </div>
   );
 }
-
-// ═══════════════════════════════════════════════════════════════
-// MAIN: Intelligence Hub Page
-// ═══════════════════════════════════════════════════════════════
 
 export default function IntelligenceHub() {
   return (
