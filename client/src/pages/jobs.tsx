@@ -757,7 +757,7 @@ export default function Jobs() {
       )}
 
       <Sheet open={!!selectedJob} onOpenChange={v => !v && setSelectedJob(null)}>
-        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+        <SheetContent className="w-full sm:max-w-6xl overflow-y-auto">
           {selectedJob && (() => {
             let reqs: string[] = [];
             try { reqs = JSON.parse(selectedJob.requirements); } catch {}
@@ -830,12 +830,12 @@ export default function Jobs() {
                 <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
                   <div className="flex items-center justify-between gap-2">
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Candidate Pipeline</p>
-                      <p className="text-xs text-muted-foreground">Add candidates directly to this job.</p>
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Candidate Pipeline Kanban</p>
+                      <p className="text-xs text-muted-foreground">Per-job stages. Add candidates here, then move them through this job's pipeline.</p>
                     </div>
                     <Badge variant="secondary">{selectedJobCandidates.length} assigned</Badge>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-2 overflow-x-auto pb-1">
+                  <div className="grid min-w-[920px] grid-cols-6 gap-2 overflow-x-auto pb-1">
                     {selectedJobCandidatesByStage.map(stage => (
                       <div key={stage.key} className={`min-h-36 rounded-lg border p-2 ${stage.color}`}>
                         <div className="flex items-center justify-between mb-2">
@@ -846,7 +846,8 @@ export default function Jobs() {
                           {stage.candidates.map(candidate => (
                             <div key={candidate.id} className="rounded-md border border-border bg-background/95 p-2 shadow-sm">
                               <p className="text-xs font-medium leading-tight">{candidate.name}</p>
-                              <p className="text-[11px] text-muted-foreground truncate">{candidate.title || candidate.company || "Candidate"}</p>
+                              <p className="text-[11px] text-muted-foreground truncate">{candidate.title || "Candidate"}</p>
+                              {candidate.company && <p className="text-[10px] text-muted-foreground truncate">{candidate.company}</p>}
                               <div className="mt-2">
                                 <select
                                   value={candidateStage(candidate)}
@@ -862,8 +863,8 @@ export default function Jobs() {
                             </div>
                           ))}
                           {stage.candidates.length === 0 && (
-                            <div className="rounded-md border border-dashed border-border/70 bg-background/40 p-2 text-center text-[11px] text-muted-foreground">
-                              No candidates
+                            <div className="rounded-md border border-dashed border-border/70 bg-background/40 p-3 text-center text-[11px] text-muted-foreground">
+                              No candidates in {stage.label}
                             </div>
                           )}
                         </div>
