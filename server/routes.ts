@@ -213,9 +213,96 @@ export async function registerRoutes(
   });
 
   // ======================== CANDIDATES ========================
+  function normalizeCandidateKey(value: string | null | undefined) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/^https?:\/\/(www\.)?/, "")
+      .replace(/\/$/, "")
+      .replace(/[^a-z0-9@.\/\-]/g, "")
+      .trim();
+  }
+
+  function candidateDuplicateGroups(allCandidates: Awaited<ReturnType<typeof storage.getCandidates>>) {
+    const groups = new Map<string, typeof allCandidates>();
+    const add = (key: string, candidate: typeof allCandidates[number]) => {
+      if (!key) return;
+      const existing = groups.get(key) || [];
+      existing.push(candidate);
+      groups.set(key, existing);
+    };
+
+    for (const candidate of allCandidates) {
+      const email = normalizeCandidateKey(candidate.email);
+      const linkedin = normalizeCandidateKey(candidate.linkedin).replace(/linkedin\.com\/in\//, "");
+      if (email) add(`email:${email}`, candidate);
+      if (linkedin) add(`linkedin:${linkedin}`, candidate);
+      const name = normalizeCandidateKey(candidate.name).replace(/\./g, "");
+      const company = normalizeCandidateKey(candidate.company).replace(/\./g, "");
+      const title = normalizeCandidateKey(candidate.title).replace(/\./g, "");
+      if (name && (company || title)) add(`person:${name}|${company}|${title}`, candidate);
+    }
+
+    const seenSets = new Set<string>();
+    return Array.from(groups.entries())
+      .filter(([, candidates]) => candidates.length > 1)
+      .map(([key, candidates]) => {
+        const unique = Array.from(new Map(candidates.map((candidate) => [candidate.id, candidate])).values());
+        return { key, candidates: unique };
+      })
+      .filter((group) => group.candidates.length > 1)
+      .map((group) => {
+        const ids = group.candidates.map((candidate) => candidate.id).sort((a, b) => a - b);
+        const fingerprint = ids.join(",");
+        if (seenSets.has(fingerprint)) return null;
+        seenSets.add(fingerprint);
+        const confidence = group.key.startsWith("email:") || group.key.startsWith("linkedin:") ? "high" : "medium";
+        const primary = group.candidates.reduce((best, candidate) => {
+          const score = (candidate.loxoId ? 20 : 0) + (candidate.linkedin ? 8 : 0) + (candidate.email ? 6 : 0) + (candidate.notes?.length || 0) / 100 + candidate.id / 1_000_000;
+          const bestScore = (best.loxoId ? 20 : 0) + (best.linkedin ? 8 : 0) + (best.email ? 6 : 0) + (best.notes?.length || 0) / 100 + best.id / 1_000_000;
+          return score > bestScore ? candidate : best;
+        }, group.candidates[0]);
+        return {
+          key: group.key,
+          confidence,
+          primaryId: primary.id,
+          candidateIds: ids,
+          candidates: group.candidates.map((candidate) => ({
+            id: candidate.id,
+            loxoId: candidate.loxoId,
+            name: candidate.name,
+            title: candidate.title,
+            company: candidate.company,
+            email: candidate.email,
+            phone: candidate.phone,
+            linkedin: candidate.linkedin,
+            status: candidate.status,
+            matchScore: candidate.matchScore,
+            lastContact: candidate.lastContact,
+          })),
+        };
+      })
+      .filter(Boolean)
+      .sort((a: any, b: any) => (a.confidence === b.confidence ? 0 : a.confidence === "high" ? -1 : 1));
+  }
+
   app.get("/api/candidates", async (_req, res) => {
     const data = await storage.getCandidates();
-    res.json(data);
+    const full = _req.query.full === "1" || _req.query.full === "true";
+    res.json(full ? data : data.map((candidate) => ({ ...candidate, linkedinSnapshot: null })));
+  });
+
+  app.get("/api/candidates/duplicates", async (_req, res) => {
+    const data = await storage.getCandidates();
+    const groups = candidateDuplicateGroups(data);
+    res.json({ groups, duplicateGroups: groups.length, duplicateCandidates: groups.reduce((sum: number, group: any) => sum + group.candidates.length, 0) });
+  });
+
+  app.post("/api/candidates/duplicates/merge", async (req, res) => {
+    const primaryId = Number(req.body?.primaryId);
+    const duplicateIds = Array.isArray(req.body?.duplicateIds) ? req.body.duplicateIds.map(Number) : [];
+    if (!Number.isFinite(primaryId) || duplicateIds.length === 0) return res.status(400).json({ error: "primaryId and duplicateIds are required" });
+    const result = await storage.mergeCandidates(primaryId, duplicateIds);
+    res.json(result);
   });
 
   app.get("/api/candidates/:id", async (req, res) => {

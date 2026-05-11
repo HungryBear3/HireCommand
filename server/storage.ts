@@ -93,6 +93,7 @@ export interface IStorage {
   createCandidate(c: InsertCandidate): Promise<Candidate>;
   updateCandidate(id: number, c: Partial<InsertCandidate>): Promise<Candidate | undefined>;
   deleteCandidate(id: number): Promise<void>;
+  mergeCandidates(primaryId: number, duplicateIds: number[]): Promise<{ primary: Candidate; mergedIds: number[] }>;
   getCandidateJobs(candidateId: number): Promise<Job[]>;
   getCandidatesForJob(jobId: number): Promise<(Candidate & { assignmentStatus?: string; assignmentNotes?: string })[]>;
   addCandidateToJob(candidateId: number, jobId: number): Promise<CandidateJobAssignment>;
@@ -194,6 +195,85 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteCandidate(id: number) {
     await db.delete(candidates).where(eq(candidates.id, id));
+  }
+
+  async mergeCandidates(primaryId: number, duplicateIds: number[]) {
+    const uniqueDuplicateIds = Array.from(new Set(duplicateIds.filter((id) => Number.isFinite(id) && id !== primaryId)));
+    const primary = await this.getCandidate(primaryId);
+    if (!primary) throw new Error("Primary candidate not found");
+    if (uniqueDuplicateIds.length === 0) return { primary, mergedIds: [] };
+
+    const duplicateRows = await Promise.all(uniqueDuplicateIds.map((id) => this.getCandidate(id)));
+    const duplicates = duplicateRows.filter(Boolean) as Candidate[];
+    if (duplicates.length === 0) return { primary, mergedIds: [] };
+
+    const all = [primary, ...duplicates];
+    const firstNonBlank = (field: keyof Candidate) => String(all.find((c) => String(c[field] ?? "").trim())?.[field] ?? "");
+    const mergeJsonArrays = (field: keyof Candidate) => {
+      const merged: unknown[] = [];
+      const seen = new Set<string>();
+      for (const candidate of all) {
+        const raw = String(candidate[field] ?? "");
+        let values: unknown[] = [];
+        try {
+          const parsed = JSON.parse(raw || "[]");
+          values = Array.isArray(parsed) ? parsed : raw ? [raw] : [];
+        } catch {
+          values = raw ? raw.split(",").map((value) => value.trim()).filter(Boolean) : [];
+        }
+        for (const value of values) {
+          const key = typeof value === "string" ? value.toLowerCase() : JSON.stringify(value);
+          if (!seen.has(key)) {
+            seen.add(key);
+            merged.push(value);
+          }
+        }
+      }
+      return JSON.stringify(merged);
+    };
+    const mergedNotes = all.map((c) => String(c.notes || "").trim()).filter(Boolean);
+    const statusRank: Record<string, number> = { sourced: 1, contacted: 2, screening: 3, interview: 4, offer: 5, placed: 6 };
+    const bestStatus = all.reduce((best, candidate) => (statusRank[candidate.status] || 0) > (statusRank[best] || 0) ? candidate.status : best, primary.status);
+    const bestLastContact = all.map((c) => c.lastContact).filter(Boolean).sort().pop() || primary.lastContact;
+
+    const patch: Partial<InsertCandidate> = {
+      loxoId: primary.loxoId as any,
+      name: firstNonBlank("name"),
+      title: firstNonBlank("title"),
+      company: firstNonBlank("company"),
+      location: firstNonBlank("location"),
+      email: firstNonBlank("email"),
+      phone: firstNonBlank("phone"),
+      linkedin: firstNonBlank("linkedin"),
+      matchScore: Math.max(...all.map((c) => c.matchScore || 0)),
+      status: bestStatus,
+      lastContact: bestLastContact,
+      tags: mergeJsonArrays("tags"),
+      notes: Array.from(new Set(mergedNotes)).join("\n\n--- merged duplicate ---\n\n"),
+      timeline: mergeJsonArrays("timeline"),
+      linkedinSyncedAt: firstNonBlank("linkedinSyncedAt") || null as any,
+      linkedinSnapshot: firstNonBlank("linkedinSnapshot") || null as any,
+      linkedinChanges: mergeJsonArrays("linkedinChanges"),
+      linkedinSyncError: primary.linkedinSyncError ?? null as any,
+    };
+
+    const updatedRows = await db.update(candidates).set(patch).where(eq(candidates.id, primaryId)).returning();
+    const updatedPrimary = updatedRows[0];
+
+    for (const duplicate of duplicates) {
+      const assignments = await db.select().from(candidateJobAssignments).where(eq(candidateJobAssignments.candidateId, duplicate.id));
+      for (const assignment of assignments) {
+        const existing = await db.select().from(candidateJobAssignments).where(and(eq(candidateJobAssignments.candidateId, primaryId), eq(candidateJobAssignments.jobId, assignment.jobId)));
+        if (existing[0]) {
+          await db.delete(candidateJobAssignments).where(eq(candidateJobAssignments.id, assignment.id));
+        } else {
+          await db.update(candidateJobAssignments).set({ candidateId: primaryId, updatedAt: new Date().toISOString() }).where(eq(candidateJobAssignments.id, assignment.id));
+        }
+      }
+      await db.delete(candidates).where(eq(candidates.id, duplicate.id));
+    }
+
+    return { primary: updatedPrimary, mergedIds: duplicates.map((c) => c.id) };
   }
 
   async getCandidateJobs(candidateId: number) {

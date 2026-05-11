@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Candidate, Job } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -166,6 +166,120 @@ function ScoreBar({ score }: { score: number }) {
       </div>
       <span className="text-xs font-medium tabular-nums">{clamped}%</span>
     </div>
+  );
+}
+
+type DuplicateCandidate = Pick<Candidate, "id" | "loxoId" | "name" | "title" | "company" | "email" | "phone" | "linkedin" | "status" | "matchScore" | "lastContact">;
+type DuplicateGroup = {
+  key: string;
+  confidence: "high" | "medium";
+  primaryId: number;
+  candidateIds: number[];
+  candidates: DuplicateCandidate[];
+};
+
+function DuplicateCandidateButton() {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const { data, isFetching, refetch } = useQuery<{ groups: DuplicateGroup[]; duplicateGroups: number; duplicateCandidates: number }>({
+    queryKey: ["/api/candidates/duplicates"],
+    enabled: open,
+  });
+  const groups = data?.groups ?? [];
+
+  const mergeMutation = useMutation({
+    mutationFn: async (group: DuplicateGroup) => {
+      const res = await apiRequest("POST", "/api/candidates/duplicates/merge", {
+        primaryId: group.primaryId,
+        duplicateIds: group.candidateIds.filter((id) => id !== group.primaryId),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/candidates"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/candidates/duplicates"] });
+      refetch();
+      toast({ title: "Duplicates merged", description: "Candidate files were consolidated into the strongest record." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Merge failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const mergeAllHighConfidence = async () => {
+    for (const group of groups.filter((g) => g.confidence === "high")) {
+      await mergeMutation.mutateAsync(group);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-2"
+        data-testid="button-duplicate-scan"
+        onClick={() => setOpen(true)}
+      >
+        <RefreshCw size={14} />
+        Dedupe
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Duplicate candidate scan</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                {isFetching ? "Scanning candidate files..." : groups.length ? `${groups.length} duplicate group${groups.length === 1 ? "" : "s"} found.` : "No duplicates found."}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching || mergeMutation.isPending}>
+                  Rescan
+                </Button>
+                <Button size="sm" onClick={mergeAllHighConfidence} disabled={mergeMutation.isPending || !groups.some((g) => g.confidence === "high")}>
+                  Merge high-confidence
+                </Button>
+              </div>
+            </div>
+            {groups.map((group) => {
+              const primary = group.candidates.find((candidate) => candidate.id === group.primaryId) || group.candidates[0];
+              return (
+                <Card key={group.key} className="border border-card-border">
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={group.confidence === "high" ? "default" : "secondary"}>{group.confidence} confidence</Badge>
+                          <span className="text-xs text-muted-foreground">Keep #{primary.id}: {primary.name}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">Matched on {group.key.replace(/^[^:]+:/, "")}</p>
+                      </div>
+                      <Button size="sm" onClick={() => mergeMutation.mutate(group)} disabled={mergeMutation.isPending}>
+                        Merge group
+                      </Button>
+                    </div>
+                    <div className="divide-y divide-border rounded-md border border-border overflow-hidden">
+                      {group.candidates.map((candidate) => (
+                        <div key={candidate.id} className="p-2 text-sm flex items-start justify-between gap-3 bg-background">
+                          <div>
+                            <div className="font-medium">#{candidate.id} {candidate.name} {candidate.id === group.primaryId ? <span className="text-xs text-primary">primary</span> : null}</div>
+                            <div className="text-xs text-muted-foreground">{candidate.title} {candidate.company ? `at ${candidate.company}` : ""}</div>
+                            <div className="text-xs text-muted-foreground">{candidate.email || candidate.linkedin || candidate.phone || "No contact fields"}</div>
+                          </div>
+                          <Badge variant="secondary" className="text-[10px] capitalize">{candidate.status}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -524,12 +638,16 @@ export default function Candidates() {
     queryKey: ["/api/candidates"],
   });
   const { data: jobs = [] } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
-  const candidatesWithDisplayScores = candidates.map((candidate) => withDisplayScore(candidate, jobs));
+  const candidatesWithDisplayScores = useMemo(
+    () => candidates.map((candidate) => withDisplayScore(candidate, jobs)),
+    [candidates, jobs],
+  );
 
   // Derive unique locations
-  const uniqueLocations = Array.from(
-    new Set(candidatesWithDisplayScores.map((c) => c.location).filter(Boolean))
-  ).sort();
+  const uniqueLocations = useMemo(
+    () => Array.from(new Set(candidatesWithDisplayScores.map((c) => c.location).filter(Boolean))).sort(),
+    [candidatesWithDisplayScores],
+  );
 
   // Count active filters
   const activeFilterCount = [
@@ -549,7 +667,7 @@ export default function Candidates() {
     setSearch("");
   }
 
-  const filtered = candidatesWithDisplayScores.filter((c) => {
+  const filtered = useMemo(() => candidatesWithDisplayScores.filter((c) => {
     if (statusFilter !== "all" && c.status !== statusFilter) return false;
     if (functionFilter !== "all" && !matchesFunction(c.title, functionFilter)) return false;
     if (!matchesLocation(c.location, locationFilter, locationSearch)) return false;
@@ -566,7 +684,8 @@ export default function Candidates() {
       );
     }
     return true;
-  });
+  }), [candidatesWithDisplayScores, statusFilter, functionFilter, locationFilter, locationSearch, scoreFilter, search]);
+  const displayed = filtered.slice(0, 250);
 
   return (
     <div className="space-y-4">
@@ -590,6 +709,7 @@ export default function Candidates() {
             AI Search
           </Button>
           <CVUploadButton />
+          <DuplicateCandidateButton />
           <AddCandidateDialog />
         </div>
       </div>
@@ -735,6 +855,11 @@ export default function Candidates() {
           Showing {filtered.length} of {candidatesWithDisplayScores.length} candidates
         </p>
       ) : null}
+      {filtered.length > displayed.length ? (
+        <p className="text-xs text-muted-foreground">
+          Rendering first {displayed.length} matches for speed — use search or filters to narrow the candidate file.
+        </p>
+      ) : null}
 
       {/* Table */}
       <Card className="border border-card-border overflow-hidden">
@@ -770,7 +895,7 @@ export default function Candidates() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((candidate) => (
+                displayed.map((candidate) => (
                   <tr
                     key={candidate.id}
                     onClick={() => setSelected(candidate)}
