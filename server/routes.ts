@@ -912,7 +912,12 @@ export async function registerRoutes(
 
           const scoredCandidate = {
             ...candidate,
-            matchScore: calculateCandidateMatchScore({ ...candidate, skillsets: p.skillsets }),
+            matchScore: calculateCandidateMatchScore({
+              ...candidate,
+              skillsets: p.skillsets,
+              rawJson: JSON.stringify(p),
+              loxoRaw: p,
+            }),
           };
 
           await storage.upsertCandidateFromLoxo(scoredCandidate);

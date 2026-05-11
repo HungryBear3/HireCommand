@@ -27,6 +27,7 @@
 
 import type { Express } from "express";
 import { storage } from "./storage";
+import { calculateCandidateMatchScore } from "./match-score";
 
 const LOXO_BASE = "https://app.loxo.co/api";
 const LOXO_SLUG = "the-hiring-advisors-1";
@@ -35,11 +36,16 @@ const LOXO_KEY  = process.env.LOXO_API_KEY || "";
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ProfileSnapshot {
-  title:    string;
-  company:  string;
-  location: string;
-  email:    string;
-  phone:    string;
+  title:       string;
+  company:     string;
+  location:    string;
+  email:       string;
+  phone:       string;
+  headline?:   string;
+  summary?:    string;
+  experiences?: unknown[];
+  education?:   unknown[];
+  skills?:      unknown[];
 }
 
 export interface ProfileChange {
@@ -111,7 +117,18 @@ async function fetchLoxoProfile(loxoId: number): Promise<ProfileSnapshot | null>
     const location = data.location || data.city || "";
     const email    = (data.emails && data.emails[0]?.email) || data.email || "";
     const phone    = (data.phones && data.phones[0]?.phone) || data.phone || "";
-    return { title, company, location, email, phone };
+    return {
+      title,
+      company,
+      location,
+      email,
+      phone,
+      headline: data.headline || data.profile_headline || "",
+      summary: data.summary || data.bio || data.description || data.skillsets || "",
+      experiences: data.experiences || data.work_experiences || data.employment_history || [],
+      education: data.education || data.educations || [],
+      skills: data.skills || data.skillsets || [],
+    };
   } catch {
     return null;
   }
@@ -132,11 +149,16 @@ async function fetchProxyCurlProfile(linkedinUrl: string): Promise<ProfileSnapsh
     if (!res.ok) return null;
     const data: any = await res.json();
     return {
-      title:    data.headline || data.occupation || "",
-      company:  (data.experiences && data.experiences[0]?.company) || "",
-      location: data.city || data.country_full_name || "",
-      email:    (data.personal_emails && data.personal_emails[0]) || "",
-      phone:    (data.personal_numbers && data.personal_numbers[0]) || "",
+      title:       data.headline || data.occupation || "",
+      company:     (data.experiences && data.experiences[0]?.company) || "",
+      location:    data.city || data.country_full_name || "",
+      email:       (data.personal_emails && data.personal_emails[0]) || "",
+      phone:       (data.personal_numbers && data.personal_numbers[0]) || "",
+      headline:    data.headline || "",
+      summary:     data.summary || data.description || "",
+      experiences: data.experiences || [],
+      education:   data.education || [],
+      skills:      data.skills || [],
     };
   } catch {
     return null;
@@ -233,16 +255,29 @@ async function syncCandidate(candidateId: number): Promise<SyncResult> {
     try { timeline = JSON.parse(candidate.timeline); } catch { /* */ }
     timeline.unshift({ date: nowDate, event: `LinkedIn profile updated: ${changeDesc}` });
     patch.timeline = JSON.stringify(timeline);
+    patch.matchScore = calculateCandidateMatchScore({
+      ...candidate,
+      ...patch,
+      timeline: patch.timeline,
+      linkedinSnapshot: JSON.stringify(freshProfile),
+      linkedinChanges: JSON.stringify(allChanges),
+    } as any);
 
     await storage.updateCandidate(candidateId, patch as any);
 
     return { candidateId, name: candidate.name, status: "updated", changes };
   } else {
     // No changes — just update the sync timestamp and refresh snapshot
+    const nextSnapshot = JSON.stringify(freshProfile);
     await storage.updateCandidate(candidateId, {
       linkedinSyncedAt:  now,
-      linkedinSnapshot:  JSON.stringify(freshProfile),
+      linkedinSnapshot:  nextSnapshot,
       linkedinSyncError: null,
+      matchScore: calculateCandidateMatchScore({
+        ...candidate,
+        linkedinSnapshot: nextSnapshot,
+        linkedinChanges: JSON.stringify(allChanges),
+      } as any),
     } as any);
     return { candidateId, name: candidate.name, status: "unchanged", changes: [] };
   }
