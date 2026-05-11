@@ -45,18 +45,19 @@ function candidateStage(candidate: JobCandidate) {
 
 interface JobForm {
   title: string; company: string; location: string;
-  stage: string; feePotential: string; description: string; requirements: string;
+  stage: string; feePotential: string; daysOpen: string; description: string; requirements: string;
 }
-const EMPTY: JobForm = { title: "", company: "", location: "", stage: "intake", feePotential: "", description: "", requirements: "" };
+const EMPTY: JobForm = { title: "", company: "", location: "", stage: "intake", feePotential: "", daysOpen: "0", description: "", requirements: "" };
 
 function jobToForm(job: Job): JobForm {
   let reqs: string[] = [];
   try { reqs = JSON.parse(job.requirements); } catch {}
-  return { title: job.title, company: job.company, location: job.location, stage: job.stage, feePotential: job.feePotential, description: job.description, requirements: reqs.join("\n") };
+  return { title: job.title, company: job.company, location: job.location, stage: job.stage, feePotential: job.feePotential, daysOpen: String(job.daysOpen ?? 0), description: job.description, requirements: reqs.join("\n") };
 }
 
 function formToPayload(form: JobForm, existing?: Job) {
   const reqs = form.requirements.split("\n").map(r => r.trim()).filter(Boolean);
+  const parsedDaysOpen = Math.max(0, Math.floor(Number(form.daysOpen) || 0));
   return {
     title: form.title,
     company: form.company,
@@ -66,7 +67,7 @@ function formToPayload(form: JobForm, existing?: Job) {
     description: form.description || "",
     requirements: JSON.stringify(reqs),
     candidateCount: existing?.candidateCount ?? 0,
-    daysOpen: existing?.daysOpen ?? 0,
+    daysOpen: parsedDaysOpen,
   };
 }
 
@@ -103,9 +104,10 @@ function nextInvoiceNumber(invoices: Invoice[]) {
   return `INV-${year}-${String(max + 1).padStart(4, "0")}`;
 }
 
-function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
+function JobFormDialog({ trigger, initial, existing, jobId, onDone, dialogTitle }: {
   trigger: React.ReactNode;
   initial?: Partial<JobForm>;
+  existing?: Job;
   jobId?: number;
   onDone: () => void;
   dialogTitle: string;
@@ -119,7 +121,7 @@ function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
   const mut = useMutation({
     mutationFn: async () => {
       if (!form.title || !form.company) throw new Error("Title and company are required");
-      const payload = formToPayload(form);
+      const payload = formToPayload(form, existing);
       const r = jobId
         ? await apiRequest("PATCH", `/api/jobs/${jobId}`, payload)
         : await apiRequest("POST", "/api/jobs", payload);
@@ -166,6 +168,10 @@ function JobFormDialog({ trigger, initial, jobId, onDone, dialogTitle }: {
             <div className="space-y-1.5">
               <Label className="text-xs">Fee Potential</Label>
               <Input value={form.feePotential} onChange={e => set("feePotential", e.target.value)} placeholder="$125,000" className="h-9 text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Days Open</Label>
+              <Input type="number" min="0" value={form.daysOpen} onChange={e => set("daysOpen", e.target.value)} placeholder="0" className="h-9 text-sm" />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label className="text-xs">Stage</Label>
@@ -437,6 +443,7 @@ export default function Jobs() {
   const [bulkStage, setBulkStage] = useState("");
   const [placementInvoiceJob, setPlacementInvoiceJob] = useState<Job | null>(null);
   const [candidateToAddId, setCandidateToAddId] = useState("");
+  const [candidateSearch, setCandidateSearch] = useState("");
   const [draggedCandidate, setDraggedCandidate] = useState<{ candidateId: number; stage: string } | null>(null);
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
@@ -454,6 +461,15 @@ export default function Jobs() {
   const closedJobs = jobs.filter(job => job.stage === "closed");
   const selectedActiveJobs = activeJobs.filter(job => selectedJobIds.includes(job.id));
   const addableCandidates = candidates.filter(candidate => !selectedJobCandidates.some(assigned => assigned.id === candidate.id));
+  const filteredAddableCandidates = addableCandidates.filter(candidate => {
+    const q = candidateSearch.trim().toLowerCase();
+    if (!q) return true;
+    return [candidate.name, candidate.title, candidate.company, candidate.email, candidate.location]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(q);
+  });
   const selectedJobCandidatesByStage = CANDIDATE_PIPELINE_STAGES.map(stage => ({
     ...stage,
     candidates: selectedJobCandidates.filter(candidate => candidateStage(candidate) === stage.key),
@@ -484,6 +500,7 @@ export default function Jobs() {
       return;
     }
     setCandidateToAddId("");
+    setCandidateSearch("");
     setSelectedJob(job);
   };
 
@@ -557,7 +574,9 @@ export default function Jobs() {
       const candidate = candidates.find(c => String(c.id) === candidateToAddId);
       queryClient.invalidateQueries({ queryKey: ["/api/jobs", selectedJob?.id, "candidates"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      if (selectedJob) setSelectedJob({ ...selectedJob, candidateCount: selectedJob.candidateCount + 1 });
       setCandidateToAddId("");
+      setCandidateSearch("");
       toast({ title: "Candidate added", description: candidate && selectedJob ? `${candidate.name} was added to ${selectedJob.title}.` : "Candidate was added to the job." });
     },
     onError: (e: Error) => toast({ title: "Could not add candidate", description: e.message, variant: "destructive" }),
@@ -834,6 +853,48 @@ export default function Jobs() {
                     </div>
                     <Badge variant="secondary">{selectedJobCandidates.length} assigned</Badge>
                   </div>
+                  {selectedJob.stage !== "closed" ? (
+                    <div className="rounded-lg border border-border bg-background p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold">Add candidate to this job</p>
+                          <p className="text-xs text-muted-foreground">Search the candidate database, then attach them directly to this open job.</p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px]">{addableCandidates.length} available</Badge>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+                        <Input
+                          value={candidateSearch}
+                          onChange={(e) => setCandidateSearch(e.target.value)}
+                          placeholder="Search name, title, company, email…"
+                          className="h-9 text-sm"
+                        />
+                        <select
+                          value={candidateToAddId}
+                          onChange={(e) => setCandidateToAddId(e.target.value)}
+                          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                        >
+                          <option value="">Select candidate…</option>
+                          {filteredAddableCandidates.map(candidate => (
+                            <option key={candidate.id} value={candidate.id}>{candidate.name} — {candidate.title || "Candidate"}{candidate.company ? ` at ${candidate.company}` : ""}</option>
+                          ))}
+                        </select>
+                        <Button
+                          size="sm"
+                          className="gap-1.5"
+                          disabled={!candidateToAddId || addCandidateMutation.isPending}
+                          onClick={() => addCandidateMutation.mutate({ candidateId: Number(candidateToAddId), jobId: selectedJob.id })}
+                        >
+                          {addCandidateMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                          Add to Job
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border bg-background/60 p-3 text-sm text-muted-foreground">
+                      Reopen this job to add candidates.
+                    </div>
+                  )}
                   <div className="grid min-w-[920px] grid-cols-6 gap-2 overflow-x-auto pb-1">
                     {selectedJobCandidatesByStage.map(stage => (
                       <div
@@ -884,26 +945,6 @@ export default function Jobs() {
                       </div>
                     ))}
                   </div>
-                  <div className="flex gap-2">
-                    <select
-                      value={candidateToAddId}
-                      onChange={(e) => setCandidateToAddId(e.target.value)}
-                      className="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"
-                    >
-                      <option value="">Select candidate…</option>
-                      {addableCandidates.map(candidate => (
-                        <option key={candidate.id} value={candidate.id}>{candidate.name} — {candidate.title}</option>
-                      ))}
-                    </select>
-                    <Button
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={!candidateToAddId || addCandidateMutation.isPending || selectedJob.stage === "closed"}
-                      onClick={() => addCandidateMutation.mutate({ candidateId: Number(candidateToAddId), jobId: selectedJob.id })}
-                    >
-                      <Plus size={13} /> Add
-                    </Button>
-                  </div>
                 </div>
 
                 {selectedJob.description && (
@@ -935,6 +976,7 @@ export default function Jobs() {
                   <JobFormDialog
                     dialogTitle="Edit Job"
                     initial={jobToForm(selectedJob)}
+                    existing={selectedJob}
                     jobId={selectedJob.id}
                     trigger={<Button size="sm" variant="outline" className="gap-1.5 flex-1"><Pencil size={13} /> Edit</Button>}
                     onDone={() => queryClient.invalidateQueries({ queryKey: ["/api/jobs"] })}
