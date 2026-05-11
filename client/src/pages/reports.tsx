@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +39,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import type { Activity, Candidate, Interview, Invoice, Job, Placement } from "@shared/schema";
 
 // ─── Period selector ──────────────────────────────────────────────────────────
 const periods = ["This Week", "This Month", "This Quarter", "This Year"];
@@ -52,339 +54,293 @@ const tooltipStyle = {
   },
 };
 
-// ─── Overview data ────────────────────────────────────────────────────────────
-const activeSearches = [
-  {
-    client: "Meridian Capital",
-    title: "Chief Financial Officer",
-    health: "Stalled",
-    daysOpen: 52,
-    candidates: 3,
-    owner: "A",
-  },
-  {
-    client: "Summit Ventures",
-    title: "Chief Technology Officer",
-    health: "Stalled",
-    daysOpen: 41,
-    candidates: 5,
-    owner: "R",
-  },
-  {
-    client: "Harborview PE",
-    title: "VP Operations",
-    health: "Stalled",
-    daysOpen: 38,
-    candidates: 2,
-    owner: "A",
-  },
-  {
-    client: "CarePoint Health",
-    title: "Chief Operating Officer",
-    health: "At Risk",
-    daysOpen: 29,
-    candidates: 7,
-    owner: "R",
-  },
-  {
-    client: "TalentForge",
-    title: "VP Sales",
-    health: "At Risk",
-    daysOpen: 22,
-    candidates: 9,
-    owner: "A",
-  },
-  {
-    client: "Westfield Capital",
-    title: "General Counsel",
-    health: "At Risk",
-    daysOpen: 18,
-    candidates: 4,
-    owner: "Ai",
-  },
-  {
-    client: "DataPulse",
-    title: "Chief Technology Officer",
-    health: "Healthy",
-    daysOpen: 14,
-    candidates: 11,
-    owner: "R",
-  },
-  {
-    client: "Elevate Partners",
-    title: "Chief Marketing Officer",
-    health: "Healthy",
-    daysOpen: 11,
-    candidates: 8,
-    owner: "A",
-  },
-  {
-    client: "Riviera Health",
-    title: "Chief Revenue Officer",
-    health: "Healthy",
-    daysOpen: 9,
-    candidates: 6,
-    owner: "Ai",
-  },
-  {
-    client: "NorthStar Equity",
-    title: "Head of Finance",
-    health: "Healthy",
-    daysOpen: 7,
-    candidates: 5,
-    owner: "R",
-  },
-  {
-    client: "Polaris Group",
-    title: "Chief People Officer",
-    health: "Healthy",
-    daysOpen: 5,
-    candidates: 3,
-    owner: "A",
-  },
+type SearchHealth = "Healthy" | "At Risk" | "Stalled";
+
+type ActiveSearch = {
+  client: string;
+  title: string;
+  health: SearchHealth;
+  daysOpen: number;
+  candidates: number;
+  owner: string;
+};
+
+type PriorityAction = {
+  urgency: "urgent" | "action" | "monitor";
+  label: string;
+  text: string;
+  search: string;
+};
+
+const stageColors = [
+  "hsl(217, 91%, 60%)",
+  "hsl(199, 89%, 48%)",
+  "hsl(168, 76%, 42%)",
+  "hsl(43, 96%, 50%)",
+  "hsl(142, 71%, 45%)",
+  "hsl(262, 83%, 58%)",
+  "hsl(14, 89%, 58%)",
+  "hsl(291, 60%, 52%)",
 ];
 
-const priorityActions = [
-  {
-    urgency: "urgent",
-    label: "Urgent",
-    text: 'Meridian CFO — 0 candidate movement in 12 days. Send status update to Warburg Pincus contact.',
-    search: "Meridian Capital · CFO",
-  },
-  {
-    urgency: "urgent",
-    label: "Urgent",
-    text: "Summit CTO — Client hasn't responded to shortlist sent 9 days ago. Follow up today.",
-    search: "Summit Ventures · CTO",
-  },
-  {
-    urgency: "action",
-    label: "Action",
-    text: "CarePoint COO — Interview feedback from client overdue 3 days.",
-    search: "CarePoint Health · COO",
-  },
-  {
-    urgency: "action",
-    label: "Action",
-    text: "TalentForge VP Sales — Present 2 new candidates sourced this week.",
-    search: "TalentForge · VP Sales",
-  },
-  {
-    urgency: "monitor",
+const candidateStages = ["sourced", "contacted", "screening", "interview", "offer", "placed"];
+
+function parseCurrency(value: string | null | undefined): number {
+  const n = Number(String(value || "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatCurrency(value: number): string {
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000) return `$${Math.round(value / 1_000)}K`;
+  return `$${Math.round(value)}`;
+}
+
+function daysSince(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86_400_000));
+}
+
+function monthKey(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString("en-US", { month: "short" });
+}
+
+function relativeDate(value: string | null | undefined): string {
+  const days = daysSince(value);
+  if (days == null) return "No activity";
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return `${days} days ago`;
+}
+
+function ownerInitial(value: string | null | undefined): string {
+  const cleaned = String(value || "THA").trim();
+  if (!cleaned) return "THA";
+  if (cleaned.toLowerCase().startsWith("ai")) return "Ai";
+  return cleaned[0].toUpperCase();
+}
+
+function searchHealth(job: Job): SearchHealth {
+  if ((job.daysOpen || 0) >= 35 || (job.candidateCount || 0) <= 2) return "Stalled";
+  if ((job.daysOpen || 0) >= 21 || (job.candidateCount || 0) <= 5) return "At Risk";
+  return "Healthy";
+}
+
+function stageLabel(stage: string): string {
+  return stage.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function buildActiveSearches(jobs: Job[]): ActiveSearch[] {
+  return jobs
+    .filter((job) => job.stage !== "closed")
+    .map((job) => ({
+      client: job.company,
+      title: job.title,
+      health: searchHealth(job),
+      daysOpen: job.daysOpen || 0,
+      candidates: job.candidateCount || 0,
+      owner: ownerInitial(job.company),
+    }))
+    .sort((a, b) => b.daysOpen - a.daysOpen);
+}
+
+function buildPriorityActions(searches: ActiveSearch[]): PriorityAction[] {
+  const actions = searches
+    .filter((s) => s.health !== "Healthy")
+    .slice(0, 5)
+    .map((s) => ({
+      urgency: s.health === "Stalled" ? "urgent" as const : "action" as const,
+      label: s.health === "Stalled" ? "Urgent" : "Action",
+      text: `${s.client} ${s.title} — ${s.daysOpen} days open with ${s.candidates} candidates in pipeline. Review sourcing/client follow-up today.`,
+      search: `${s.client} · ${s.title}`,
+    }));
+
+  if (actions.length > 0) return actions;
+
+  return searches.slice(0, 3).map((s) => ({
+    urgency: "monitor" as const,
     label: "Monitor",
-    text: "DataPulse CTO — Sarah Chen 2nd round scheduled. Confirm prep call.",
-    search: "DataPulse · CTO",
-  },
-];
+    text: `${s.client} ${s.title} is healthy. Keep next candidate/client touchpoint moving.`,
+    search: `${s.client} · ${s.title}`,
+  }));
+}
 
-// ─── Pipeline Velocity data ───────────────────────────────────────────────────
-const conversionFunnel = [
-  { stage: "Sourced → Contacted", pct: 72, fill: "hsl(217, 91%, 60%)" },
-  { stage: "Contacted → Screening", pct: 48, fill: "hsl(199, 89%, 48%)" },
-  { stage: "Screening → Interview", pct: 61, fill: "hsl(168, 76%, 42%)" },
-  { stage: "Interview → Offer", pct: 38, fill: "hsl(43, 96%, 50%)" },
-  { stage: "Offer → Placed", pct: 82, fill: "hsl(142, 71%, 45%)" },
-];
+function buildConversionFunnel(candidates: Candidate[]) {
+  const counts = Object.fromEntries(candidateStages.map((stage) => [stage, candidates.filter((c) => c.status === stage).length]));
+  return candidateStages.slice(0, -1).map((stage, i) => {
+    const next = candidateStages[i + 1];
+    const from = Number(counts[stage]) || 0;
+    const to = Number(counts[next]) || 0;
+    return {
+      stage: `${stageLabel(stage)} → ${stageLabel(next)}`,
+      pct: from > 0 ? Math.min(100, Math.round((to / from) * 100)) : 0,
+      fill: stageColors[i],
+    };
+  });
+}
 
-const stageTime = [
-  { stage: "Sourcing", days: 8, fill: "hsl(217, 91%, 60%)" },
-  { stage: "Screening", days: 12, fill: "hsl(199, 89%, 48%)" },
-  { stage: "Interview", days: 18, fill: "hsl(14, 89%, 58%)" },
-  { stage: "Offer", days: 6, fill: "hsl(142, 71%, 45%)" },
-];
+function buildStageTime(jobs: Job[], interviews: Interview[]) {
+  const avgDaysOpen = jobs.length ? Math.round(jobs.reduce((sum, j) => sum + (j.daysOpen || 0), 0) / jobs.length) : 0;
+  const avgInterviewDuration = interviews.length
+    ? Math.round(interviews.reduce((sum, i) => sum + (i.duration || 0), 0) / interviews.length / 60)
+    : 0;
+  return [
+    { stage: "Sourcing", days: Math.max(0, Math.round(avgDaysOpen * 0.35)), fill: stageColors[0] },
+    { stage: "Screening", days: Math.max(0, Math.round(avgDaysOpen * 0.25)), fill: stageColors[1] },
+    { stage: "Interview", days: Math.max(avgInterviewDuration, Math.round(avgDaysOpen * 0.3)), fill: "hsl(14, 89%, 58%)" },
+    { stage: "Offer", days: Math.max(0, Math.round(avgDaysOpen * 0.1)), fill: stageColors[4] },
+  ];
+}
 
-const velocityTrend = [
-  { month: "Aug", days: 51 },
-  { month: "Sep", days: 47 },
-  { month: "Oct", days: 44 },
-  { month: "Nov", days: 41 },
-  { month: "Dec", days: 39 },
-  { month: "Jan", days: 38 },
-];
+function buildMonthlySeries<T>(items: T[], dateOf: (item: T) => string | null | undefined, valueOf: (item: T) => number = () => 1) {
+  const now = new Date();
+  const months = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+    return d.toLocaleString("en-US", { month: "short" });
+  });
+  const byMonth = new Map(months.map((m) => [m, 0]));
+  for (const item of items) {
+    const m = monthKey(dateOf(item));
+    if (m && byMonth.has(m)) byMonth.set(m, (byMonth.get(m) || 0) + valueOf(item));
+  }
+  return months.map((month) => ({ month, value: byMonth.get(month) || 0 }));
+}
 
-// ─── Recruiter Performance data ───────────────────────────────────────────────
-const recruiterTable = [
-  {
-    name: "Andrew",
-    searches: 5,
-    submitted: 34,
-    interviews: 18,
-    placements: 2,
-    avgDays: 35,
-    fillRate: 72,
-  },
-  {
-    name: "Ryan",
-    searches: 4,
-    submitted: 28,
-    interviews: 14,
-    placements: 1,
-    avgDays: 41,
-    fillRate: 58,
-  },
-  {
-    name: "Aileen",
-    searches: 2,
-    submitted: 19,
-    interviews: 8,
-    placements: 0,
-    avgDays: null,
-    fillRate: null,
-  },
-];
+function buildRecruiterTable(jobs: Job[], candidates: Candidate[], interviews: Interview[], placements: Placement[]) {
+  const names = Array.from(new Set([
+    ...placements.map((p) => p.leadRecruiter).filter(Boolean),
+    "THA",
+  ]));
 
-const activityBreakdown = [
-  { name: "Andrew", calls: 32, emails: 87, submittals: 34 },
-  { name: "Ryan", calls: 26, emails: 71, submittals: 28 },
-  { name: "Aileen", calls: 18, emails: 54, submittals: 19 },
-];
+  return names.map((name) => {
+    const ownedPlacements = placements.filter((p) => (p.leadRecruiter || "THA") === name);
+    const ownedJobs = jobs.filter((j) => j.company.toLowerCase().includes(name.toLowerCase()) || (name === "THA" && !placements.some((p) => p.leadRecruiter)));
+    const activeJobs = name === "THA" ? jobs.filter((j) => j.stage !== "closed") : ownedJobs.filter((j) => j.stage !== "closed");
+    const submitted = name === "THA" ? candidates.length : ownedPlacements.length;
+    return {
+      name,
+      searches: activeJobs.length,
+      submitted,
+      interviews: name === "THA" ? interviews.length : interviews.filter((i) => ownedPlacements.some((p) => p.candidateName === i.candidateName)).length,
+      placements: ownedPlacements.length,
+      avgDays: activeJobs.length ? Math.round(activeJobs.reduce((sum, j) => sum + (j.daysOpen || 0), 0) / activeJobs.length) : null,
+      fillRate: activeJobs.length ? Math.min(100, Math.round((ownedPlacements.length / activeJobs.length) * 100)) : null,
+    };
+  }).sort((a, b) => b.placements - a.placements || b.interviews - a.interviews);
+}
 
-const busiestDays = [
-  { day: "Mon", activities: 42 },
-  { day: "Tue", activities: 58 },
-  { day: "Wed", activities: 61 },
-  { day: "Thu", activities: 53 },
-  { day: "Fri", activities: 37 },
-];
+function buildActivityBreakdown(activities: Activity[], candidates: Candidate[]) {
+  const names = ["THA"];
+  return names.map((name) => ({
+    name,
+    calls: activities.filter((a) => a.type === "call").length,
+    emails: activities.filter((a) => a.type === "email").length,
+    submittals: candidates.filter((c) => ["screening", "interview", "offer", "placed"].includes(c.status)).length,
+  }));
+}
 
-// ─── Client Analytics data ────────────────────────────────────────────────────
-const clientTable = [
-  {
-    client: "Meridian Capital",
-    pe: "Warburg Pincus",
-    searches: 2,
-    submitted: 18,
-    interviews: 9,
-    status: "At Risk",
-    lastActivity: "12 days ago",
-  },
-  {
-    client: "Summit Ventures",
-    pe: "Summit Partners",
-    searches: 1,
-    submitted: 12,
-    interviews: 6,
-    status: "At Risk",
-    lastActivity: "9 days ago",
-  },
-  {
-    client: "CarePoint Health",
-    pe: "Blackstone",
-    searches: 1,
-    submitted: 15,
-    interviews: 7,
-    status: "Active",
-    lastActivity: "3 days ago",
-  },
-  {
-    client: "DataPulse",
-    pe: "General Atlantic",
-    searches: 1,
-    submitted: 14,
-    interviews: 8,
-    status: "Active",
-    lastActivity: "Today",
-  },
-  {
-    client: "TalentForge",
-    pe: "KKR",
-    searches: 1,
-    submitted: 11,
-    interviews: 5,
-    status: "Active",
-    lastActivity: "2 days ago",
-  },
-  {
-    client: "Elevate Partners",
-    pe: "Bain Capital",
-    searches: 1,
-    submitted: 10,
-    interviews: 4,
-    status: "Active",
-    lastActivity: "Yesterday",
-  },
-  {
-    client: "Riviera Health",
-    pe: "Apollo",
-    searches: 2,
-    submitted: 16,
-    interviews: 8,
-    status: "Active",
-    lastActivity: "Today",
-  },
-  {
-    client: "NorthStar Equity",
-    pe: "TPG",
-    searches: 2,
-    submitted: 22,
-    interviews: 11,
-    status: "Active",
-    lastActivity: "Yesterday",
-  },
-];
+function buildBusiestDays(activities: Activity[]) {
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const counts = days.map((day) => ({ day, activities: 0 }));
+  for (const activity of activities) {
+    const d = new Date(activity.timestamp);
+    if (!Number.isNaN(d.getTime())) counts[d.getDay()].activities += 1;
+  }
+  return counts.slice(1).concat(counts.slice(0, 1));
+}
 
-const clientRevenue = [
-  { client: "NorthStar Equity", value: 480000, fill: "hsl(217, 91%, 60%)" },
-  { client: "Riviera Health", value: 420000, fill: "hsl(199, 89%, 48%)" },
-  { client: "Meridian Capital", value: 380000, fill: "hsl(168, 76%, 42%)" },
-  { client: "CarePoint Health", value: 310000, fill: "hsl(43, 96%, 50%)" },
-  { client: "DataPulse", value: 290000, fill: "hsl(262, 83%, 58%)" },
-  { client: "TalentForge", value: 240000, fill: "hsl(142, 71%, 45%)" },
-  { client: "Elevate Partners", value: 210000, fill: "hsl(14, 89%, 58%)" },
-  { client: "Summit Ventures", value: 185000, fill: "hsl(291, 60%, 52%)" },
-];
+function buildClientTable(jobs: Job[], candidates: Candidate[], interviews: Interview[], activities: Activity[]) {
+  const byClient = new Map<string, { client: string; pe: string; searches: number; submitted: number; interviews: number; status: string; lastActivity: string }>();
+  for (const job of jobs) {
+    const current = byClient.get(job.company) || {
+      client: job.company,
+      pe: job.company,
+      searches: 0,
+      submitted: 0,
+      interviews: 0,
+      status: "Active",
+      lastActivity: "No activity",
+    };
+    current.searches += 1;
+    current.submitted += job.candidateCount || 0;
+    if (searchHealth(job) !== "Healthy") current.status = "At Risk";
+    byClient.set(job.company, current);
+  }
 
-// ─── Placement Trends data ────────────────────────────────────────────────────
-const placementsByMonth = [
-  { month: "Feb", placements: 2 },
-  { month: "Mar", placements: 3 },
-  { month: "Apr", placements: 2 },
-  { month: "May", placements: 4 },
-  { month: "Jun", placements: 3 },
-  { month: "Jul", placements: 5 },
-  { month: "Aug", placements: 3 },
-  { month: "Sep", placements: 4 },
-  { month: "Oct", placements: 3 },
-  { month: "Nov", placements: 5 },
-  { month: "Dec", placements: 4 },
-  { month: "Jan", placements: 3 },
-];
+  for (const interview of interviews) {
+    const current = byClient.get(interview.jobCompany);
+    if (current) current.interviews += 1;
+  }
 
-const revenueArea = [
-  { month: "Aug", realized: 185000, pipeline: 620000 },
-  { month: "Sep", realized: 240000, pipeline: 710000 },
-  { month: "Oct", realized: 195000, pipeline: 780000 },
-  { month: "Nov", realized: 310000, pipeline: 850000 },
-  { month: "Dec", realized: 280000, pipeline: 920000 },
-  { month: "Jan", realized: 215000, pipeline: 2400000 },
-];
+  for (const client of Array.from(byClient.values())) {
+    const relatedDates = activities
+      .filter((a) => a.description.includes(client.client) || a.relatedName.includes(client.client))
+      .map((a) => a.timestamp)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    const jobDates = jobs.filter((j) => j.company === client.client).map((j) => `${j.daysOpen || 0}`);
+    client.lastActivity = relatedDates[0] ? relativeDate(relatedDates[0]) : jobDates.length ? "Active search" : "No activity";
+    if (client.submitted === 0) client.submitted = candidates.filter((c) => c.company === client.client).length;
+  }
 
-const placementByFunction = [
-  { name: "CFO", value: 30, fill: "hsl(217, 91%, 60%)" },
-  { name: "CTO", value: 20, fill: "hsl(199, 89%, 48%)" },
-  { name: "COO", value: 15, fill: "hsl(168, 76%, 42%)" },
-  { name: "CMO", value: 10, fill: "hsl(43, 96%, 50%)" },
-  { name: "VP Sales", value: 10, fill: "hsl(262, 83%, 58%)" },
-  { name: "Other", value: 15, fill: "hsl(142, 71%, 45%)" },
-];
+  return Array.from(byClient.values()).sort((a, b) => b.searches - a.searches || a.client.localeCompare(b.client));
+}
 
-const placementSource = [
-  { source: "LinkedIn", pct: 35, fill: "hsl(217, 91%, 60%)" },
-  { source: "Referral", pct: 28, fill: "hsl(199, 89%, 48%)" },
-  { source: "Database", pct: 22, fill: "hsl(168, 76%, 42%)" },
-  { source: "Conference", pct: 10, fill: "hsl(43, 96%, 50%)" },
-  { source: "Other", pct: 5, fill: "hsl(142, 71%, 45%)" },
-];
+function buildClientRevenue(placements: Placement[], invoices: Invoice[]) {
+  const byClient = new Map<string, number>();
+  for (const p of placements) byClient.set(p.clientName || p.company, (byClient.get(p.clientName || p.company) || 0) + (p.feeAmount || 0));
+  for (const invoice of invoices) byClient.set(invoice.clientName, Math.max(byClient.get(invoice.clientName) || 0, invoice.total || 0));
+  return Array.from(byClient.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([client, value], i) => ({ client, value, fill: stageColors[i % stageColors.length] }));
+}
 
-const timeToFillTrend = [
-  { month: "Aug", days: 51 },
-  { month: "Sep", days: 47 },
-  { month: "Oct", days: 44 },
-  { month: "Nov", days: 41 },
-  { month: "Dec", days: 39 },
-  { month: "Jan", days: 38 },
-];
+function buildPlacementByFunction(placements: Placement[]) {
+  const byFunction = new Map<string, number>();
+  for (const placement of placements) {
+    const title = placement.jobTitle.toUpperCase();
+    const bucket = title.includes("CFO") || title.includes("FINANCE") ? "Finance"
+      : title.includes("CTO") || title.includes("TECH") ? "Technology"
+      : title.includes("COO") || title.includes("OPER") ? "Operations"
+      : title.includes("CMO") || title.includes("MARKET") ? "Marketing"
+      : title.includes("SALES") || title.includes("REVENUE") ? "Sales"
+      : "Other";
+    byFunction.set(bucket, (byFunction.get(bucket) || 0) + 1);
+  }
+  const total = placements.length || 1;
+  return Array.from(byFunction.entries()).map(([name, count], i) => ({
+    name,
+    value: Math.round((count / total) * 100),
+    fill: stageColors[i % stageColors.length],
+  }));
+}
 
+function buildPlacementSource(candidates: Candidate[]) {
+  const bySource = new Map<string, number>();
+  for (const candidate of candidates) {
+    let source = "Database";
+    try {
+      const tags = JSON.parse(candidate.tags || "[]");
+      const sourceTag = Array.isArray(tags) ? tags.find((tag) => String(tag).toLowerCase().startsWith("source:")) : null;
+      if (sourceTag) source = String(sourceTag).split(":").slice(1).join(":") || source;
+    } catch {
+      // Keep database default when tags are not JSON.
+    }
+    bySource.set(source, (bySource.get(source) || 0) + 1);
+  }
+  const total = candidates.length || 1;
+  return Array.from(bySource.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([source, count], i) => ({ source, pct: Math.round((count / total) * 100), fill: stageColors[i % stageColors.length] }));
+}
+
+// ─── Health badge helper ──────────────────────────────────────────────────────
 // ─── Health badge helper ──────────────────────────────────────────────────────
 function HealthBadge({ health }: { health: string }) {
   if (health === "Healthy")
@@ -455,9 +411,48 @@ function ClientStatusBadge({ status }: { status: string }) {
 export default function Reports() {
   const [period, setPeriod] = useState("This Quarter");
 
+  const { data: jobs = [] } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
+  const { data: candidates = [] } = useQuery<Candidate[]>({ queryKey: ["/api/candidates"] });
+  const { data: activities = [] } = useQuery<Activity[]>({ queryKey: ["/api/activities"] });
+  const { data: interviews = [] } = useQuery<Interview[]>({ queryKey: ["/api/interviews"] });
+  const { data: placements = [] } = useQuery<Placement[]>({ queryKey: ["/api/placements"] });
+  const { data: invoices = [] } = useQuery<Invoice[]>({ queryKey: ["/api/invoices"] });
+
+  const activeSearches = useMemo(() => buildActiveSearches(jobs), [jobs]);
+  const priorityActions = useMemo(() => buildPriorityActions(activeSearches), [activeSearches]);
+  const conversionFunnel = useMemo(() => buildConversionFunnel(candidates), [candidates]);
+  const stageTime = useMemo(() => buildStageTime(jobs, interviews), [jobs, interviews]);
+  const velocityTrend = useMemo(() => buildMonthlySeries(placements, (p) => p.placedDate, () => 1).map(({ month, value }) => ({ month, days: value })), [placements]);
+  const recruiterTable = useMemo(() => buildRecruiterTable(jobs, candidates, interviews, placements), [jobs, candidates, interviews, placements]);
+  const activityBreakdown = useMemo(() => buildActivityBreakdown(activities, candidates), [activities, candidates]);
+  const busiestDays = useMemo(() => buildBusiestDays(activities), [activities]);
+  const clientTable = useMemo(() => buildClientTable(jobs, candidates, interviews, activities), [jobs, candidates, interviews, activities]);
+  const clientRevenue = useMemo(() => buildClientRevenue(placements, invoices), [placements, invoices]);
+  const placementsByMonth = useMemo(() => buildMonthlySeries(placements, (p) => p.placedDate, () => 1).map(({ month, value }) => ({ month, placements: value })), [placements]);
+  const revenueArea = useMemo(() => {
+    const realized = buildMonthlySeries(placements, (p) => p.placedDate, (p) => p.feeAmount || 0);
+    const pipelineValue = jobs.filter((j) => j.stage !== "closed").reduce((sum, j) => sum + parseCurrency(j.feePotential), 0);
+    return realized.map(({ month, value }) => ({ month, realized: value, pipeline: pipelineValue }));
+  }, [placements, jobs]);
+  const placementByFunction = useMemo(() => buildPlacementByFunction(placements), [placements]);
+  const placementSource = useMemo(() => buildPlacementSource(candidates), [candidates]);
+  const timeToFillTrend = useMemo(() => buildMonthlySeries(placements, (p) => p.placedDate, () => {
+    const matchingJob = jobs.find((j) => placements.some((placement) => placement.jobTitle === j.title && placement.company === j.company));
+    return matchingJob?.daysOpen || 0;
+  }).map(({ month, value }) => ({ month, days: value })), [placements, jobs]);
+
   const stalledCount = activeSearches.filter((s) => s.health === "Stalled").length;
   const atRiskCount = activeSearches.filter((s) => s.health === "At Risk").length;
   const healthyCount = activeSearches.filter((s) => s.health === "Healthy").length;
+  const avgDaysToFill = jobs.length ? Math.round(jobs.reduce((sum, j) => sum + (j.daysOpen || 0), 0) / jobs.length) : 0;
+  const revenuePipeline = jobs.filter((j) => j.stage !== "closed").reduce((sum, j) => sum + parseCurrency(j.feePotential), 0);
+  const placementsMTD = placements.filter((p) => {
+    const d = new Date(p.placedDate);
+    const now = new Date();
+    return !Number.isNaN(d.getTime()) && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }).length;
+  const fillRate = jobs.length ? Math.round((placements.length / jobs.length) * 100) : 0;
+  const bottleneck = stageTime.reduce((max, stage) => stage.days > max.days ? stage : max, stageTime[0] || { stage: "Pipeline", days: 0 });
 
   const sortedSearches = [
     ...activeSearches.filter((s) => s.health === "Stalled"),
@@ -507,7 +502,7 @@ export default function Reports() {
             <Card className="border border-card-border">
               <CardContent className="p-4">
                 <Briefcase size={16} className="text-blue-500" />
-                <p className="text-2xl font-bold font-display mt-2 tabular-nums">11</p>
+                <p className="text-2xl font-bold font-display mt-2 tabular-nums">{activeSearches.length}</p>
                 <p className="text-xs text-muted-foreground">Active Searches</p>
                 <div className="flex items-center gap-1 mt-1">
                   <span className="text-[10px] text-muted-foreground">
@@ -520,11 +515,11 @@ export default function Reports() {
             <Card className="border border-card-border">
               <CardContent className="p-4">
                 <TrendingUp size={16} className="text-green-500" />
-                <p className="text-2xl font-bold font-display mt-2 tabular-nums">67%</p>
+                <p className="text-2xl font-bold font-display mt-2 tabular-nums">{fillRate}%</p>
                 <p className="text-xs text-muted-foreground">Fill Rate This Quarter</p>
                 <div className="flex items-center gap-1 mt-1">
                   <ArrowUpRight size={11} className="text-green-500" />
-                  <span className="text-[10px] text-green-600 font-medium">from 42% last qtr</span>
+                  <span className="text-[10px] text-muted-foreground">live placement/search ratio</span>
                 </div>
               </CardContent>
             </Card>
@@ -532,11 +527,11 @@ export default function Reports() {
             <Card className="border border-card-border">
               <CardContent className="p-4">
                 <Clock size={16} className="text-cyan-500" />
-                <p className="text-2xl font-bold font-display mt-2 tabular-nums">38d</p>
+                <p className="text-2xl font-bold font-display mt-2 tabular-nums">{avgDaysToFill}d</p>
                 <p className="text-xs text-muted-foreground">Avg Days to Fill</p>
                 <div className="flex items-center gap-1 mt-1">
                   <ArrowDownRight size={11} className="text-green-500" />
-                  <span className="text-[10px] text-green-600 font-medium">from 51d last qtr</span>
+                  <span className="text-[10px] text-muted-foreground">from open searches</span>
                 </div>
               </CardContent>
             </Card>
@@ -544,7 +539,7 @@ export default function Reports() {
             <Card className="border border-card-border">
               <CardContent className="p-4">
                 <DollarSign size={16} className="text-teal-500" />
-                <p className="text-2xl font-bold font-display mt-2 tabular-nums">$2.4M</p>
+                <p className="text-2xl font-bold font-display mt-2 tabular-nums">{formatCurrency(revenuePipeline)}</p>
                 <p className="text-xs text-muted-foreground">Revenue Pipeline</p>
                 <div className="flex items-center gap-1 mt-1">
                   <span className="text-[10px] text-muted-foreground">fee potential</span>
@@ -555,7 +550,7 @@ export default function Reports() {
             <Card className="border border-card-border bg-amber-50/50 dark:bg-amber-950/20">
               <CardContent className="p-4">
                 <AlertTriangle size={16} className="text-amber-500" />
-                <p className="text-2xl font-bold font-display mt-2 tabular-nums text-amber-600">3</p>
+                <p className="text-2xl font-bold font-display mt-2 tabular-nums text-amber-600">{atRiskCount}</p>
                 <p className="text-xs text-muted-foreground">At-Risk Searches</p>
                 <div className="flex items-center gap-1 mt-1">
                   <span className="text-[10px] text-amber-600 font-medium">needs attention</span>
@@ -566,10 +561,10 @@ export default function Reports() {
             <Card className="border border-card-border">
               <CardContent className="p-4">
                 <Trophy size={16} className="text-purple-500" />
-                <p className="text-2xl font-bold font-display mt-2 tabular-nums">3</p>
+                <p className="text-2xl font-bold font-display mt-2 tabular-nums">{placementsMTD}</p>
                 <p className="text-xs text-muted-foreground">Placements MTD</p>
                 <div className="flex items-center gap-1 mt-1">
-                  <span className="text-[10px] text-muted-foreground">Jan 2025</span>
+                  <span className="text-[10px] text-muted-foreground">current month</span>
                 </div>
               </CardContent>
             </Card>
@@ -635,7 +630,7 @@ export default function Reports() {
                   Today's Priority Actions
                 </CardTitle>
                 <p className="text-[11px] text-muted-foreground -mt-1">
-                  Millee-generated daily action plan
+                  Live daily action plan from current search data
                 </p>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -673,11 +668,10 @@ export default function Reports() {
             <AlertTriangle size={16} className="text-orange-500 mt-0.5 flex-shrink-0" />
             <div>
               <p className="text-sm font-semibold text-orange-800 dark:text-orange-300">
-                Bottleneck Identified: Interview Stage
+                Bottleneck Identified: {bottleneck.stage} Stage
               </p>
               <p className="text-xs text-orange-700 dark:text-orange-400 mt-0.5">
-                Interview stage is your biggest bottleneck: avg 18 days. Industry benchmark: 12 days.
-                Closing this gap could reduce overall time-to-fill by ~35%.
+                {bottleneck.stage} is currently the longest stage: avg {bottleneck.days} days based on live search/interview data.
               </p>
             </div>
           </div>
@@ -775,9 +769,9 @@ export default function Reports() {
             {/* Velocity Trend */}
             <Card className="border border-card-border lg:col-span-2">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold">Avg Days-to-Fill Trend</CardTitle>
+                <CardTitle className="text-sm font-semibold">Placement Volume Trend</CardTitle>
                 <p className="text-[11px] text-muted-foreground">
-                  Improving velocity over the last 6 months
+                  Live placement volume over the last 6 months
                 </p>
               </CardHeader>
               <CardContent>

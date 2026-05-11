@@ -465,79 +465,6 @@ async function searchPDL(
   });
 }
 
-// ─── Demo / fallback data (used when no API keys configured) ───────────────────
-
-function generateDemoResults(brief: Partial<SourcingBrief>, query: string): SourcingCandidate[] {
-  const titles = brief.titles?.length ? brief.titles : ["Chief Accounting Officer"];
-  const locations = brief.locations?.length ? brief.locations : ["Chicago", "New York", "Boston"];
-  const industries = brief.industries?.length ? brief.industries : ["Healthcare", "Technology", "Private Equity"];
-
-  const names = [
-    ["Sarah Chen", "Jennifer Park", "Michael Torres", "David Kim", "Lisa Wang"],
-    ["Robert Hoffman", "Amanda Sullivan", "James Patel", "Christine Lee", "Marcus Webb"],
-    ["Katherine Mills", "Andrew Nguyen", "Stephanie Ross", "Brian O'Connor", "Priya Sharma"],
-  ];
-
-  const companies = [
-    "MedBridge Health Systems", "CarePoint Capital", "Summit Healthcare Partners",
-    "Meridian Health", "BrightPath Medical", "VitalWell Consumer Health",
-    "Acme Health", "TalentForge Ventures", "Summit Capital",
-    "DataPulse Analytics", "CoreFocus Health", "NovaBridge Partners",
-  ];
-
-  const results: SourcingCandidate[] = [];
-  let idx = 0;
-
-  for (let i = 0; i < 3; i++) {
-    const group = names[i % names.length];
-    for (let j = 0; j < 4 && results.length < 12; j++) {
-      const name = group[j];
-      const title = titles[idx % titles.length];
-      const company = companies[idx % companies.length];
-      const location = locations[idx % locations.length];
-      const industry = industries[idx % industries.length];
-      const yoe = 8 + (idx % 12);
-
-      results.push({
-        id: `demo_${idx}`,
-        name,
-        currentTitle: title,
-        currentCompany: company,
-        location: `${location}, US`,
-        headline: `${title} at ${company} · ${yoe} years in ${industry}`,
-        summary: generateQuickSummary(name, title, company, location, `${yoe} years of experience in ${industry}`),
-        skills: getDemoSkills(title),
-        source: "linkedin_xray",
-        sourceUrl: `https://www.linkedin.com/in/${name.toLowerCase().replace(/\s/g, "-")}-${idx}`,
-        linkedinUrl: `https://www.linkedin.com/in/${name.toLowerCase().replace(/\s/g, "-")}-${idx}`,
-        fitScore: 0,
-        fitReasons: [],
-        addedToPipeline: false,
-      });
-      idx++;
-    }
-  }
-
-  return results;
-}
-
-function getDemoSkills(title: string): string[] {
-  const t = title.toLowerCase();
-  if (t.includes("financial") || t.includes("cfo") || t.includes("controller")) {
-    return ["GAAP", "M&A", "Financial Modeling", "PE-backed", "ERP", "SOX", "FP&A", "Budgeting"];
-  }
-  if (t.includes("technology") || t.includes("cto") || t.includes("engineer")) {
-    return ["Cloud Architecture", "AWS", "Python", "Kubernetes", "Engineering Management", "Agile"];
-  }
-  if (t.includes("operating") || t.includes("coo")) {
-    return ["Operations", "P&L", "Scale-up", "Process Improvement", "KPIs", "Supply Chain"];
-  }
-  if (t.includes("marketing") || t.includes("cmo")) {
-    return ["Brand Strategy", "Demand Gen", "Product Marketing", "Growth", "Marketing Ops"];
-  }
-  return ["Leadership", "P&L Management", "Strategic Planning", "Team Building", "PE-backed"];
-}
-
 // ─── Fit Scoring ──────────────────────────────────────────────────────────────
 
 function scoreCandidates(
@@ -919,12 +846,8 @@ export function registerSourcingRoutes(app: Express) {
         await Promise.all(tasks);
       }
 
-      // Fallback to demo when no real results
-      if (allCandidates.length === 0) {
-        const demo = generateDemoResults(briefParsed, query);
-        allCandidates.push(...demo);
-        sourceCounts.linkedin_xray = demo.filter(d => d.source === "linkedin_xray").length;
-      }
+      // Do not synthesize demo candidates here. Empty live-source results must stay empty
+      // so recruiters can distinguish a real search miss from sample data.
 
       // Step 3: Score non-Perplexity candidates (Perplexity scores its own)
       const toScore = allCandidates.filter(c => c.source !== "perplexity");

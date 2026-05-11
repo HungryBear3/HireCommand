@@ -487,13 +487,13 @@ function BriefAnalysisPanel({ result, onCopyBoolean, demoMode, googleAvailable, 
           </div>
         )}
 
-        {/* Demo mode notice */}
+        {/* Live search setup notice */}
         {demoMode && (
           <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3">
             <div className="flex items-start gap-2">
               <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div>
-                <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Demo Mode</p>
+                <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Live Search Setup</p>
                 <ul className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 leading-relaxed space-y-0.5">
                   {!googleAvailable && <li>→ Google CSE keys for X-Ray</li>}
                   {!perplexityAvailable && <li>→ Perplexity key for AI search</li>}
@@ -697,13 +697,13 @@ export default function Source() {
           </Button>
         </div>
 
-        {/* Demo mode banner */}
+        {/* Live search setup banner */}
         {demoMode && result && (
           <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-4 py-2.5">
             <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
             <p className="text-xs text-amber-700 dark:text-amber-300">
-              Running in demo mode — add your Google CSE API key in{" "}
-              <span className="font-semibold">Settings → API Keys</span> to enable live search
+              Live sourcing is not fully configured — add Google CSE and/or Perplexity keys in {" "}
+              <span className="font-semibold">Settings → API Keys</span> to enable all sources
             </p>
           </div>
         )}
@@ -987,17 +987,17 @@ export default function Source() {
           </div>
         )}
 
-        {/* Demo mode notice in search state */}
+        {/* Live search setup notice in search state */}
         {demoMode && (
           <div className="mt-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-4 py-3 space-y-1.5">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
               <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">
-                Demo mode — results are simulated
+                Live sourcing setup incomplete
               </p>
             </div>
             <p className="text-xs text-amber-600 dark:text-amber-400 pl-6">
-              Add API keys in <span className="font-semibold">Settings → Sourcing APIs</span> to enable live search:
+              Add API keys in <span className="font-semibold">Settings → Sourcing APIs</span> to enable more live sources. Empty searches now return no candidates instead of simulated people:
             </p>
             <ul className="text-xs text-amber-600 dark:text-amber-400 pl-6 space-y-0.5 list-disc list-inside">
               <li><span className="font-medium">Google CSE</span> — powers LinkedIn X-Ray &amp; Open Web search</li>
