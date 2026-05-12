@@ -493,7 +493,7 @@ export function registerQBRoutes(app: Express) {
   /** POST /api/qb/push/:id — push single invoice to QB */
   app.post("/api/qb/push/:id", async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(String(req.params.id), 10);
       const result = await pushInvoiceToQB(id);
 
       await storage.updateInvoice(id, {

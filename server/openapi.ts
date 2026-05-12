@@ -648,7 +648,7 @@ export function registerOpenApi(app: Express) {
   });
 
   v1.get("/commissions/employee/:name", async (req: Request, res: Response) => {
-    const employee = decodeURIComponent(req.params.name);
+    const employee = decodeURIComponent(String(req.params.name));
     const splits = await storage.getSplitsForEmployee(employee);
     const rows = await Promise.all(splits.map(async (s) => {
       const p = await storage.getPlacement(s.placementId);

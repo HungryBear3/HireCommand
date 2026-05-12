@@ -66,7 +66,9 @@ export interface SyncResult {
 
 // ─── Diff helper ─────────────────────────────────────────────────────────────
 
-const FIELD_LABELS: Record<string, string> = {
+type DiffableProfileField = "title" | "company" | "location" | "email" | "phone";
+
+const FIELD_LABELS: Record<DiffableProfileField, string> = {
   title:    "Job Title",
   company:  "Company",
   location: "Location",
@@ -74,13 +76,15 @@ const FIELD_LABELS: Record<string, string> = {
   phone:    "Phone",
 };
 
+const DIFF_FIELDS = Object.keys(FIELD_LABELS) as DiffableProfileField[];
+
 function diffSnapshots(
   prev: ProfileSnapshot,
   next: ProfileSnapshot,
 ): ProfileChange[] {
   const changes: ProfileChange[] = [];
   const now = new Date().toISOString();
-  for (const key of Object.keys(FIELD_LABELS) as (keyof ProfileSnapshot)[]) {
+  for (const key of DIFF_FIELDS) {
     const oldVal = (prev[key] ?? "").trim();
     const newVal = (next[key] ?? "").trim();
     if (oldVal && newVal && oldVal !== newVal) {

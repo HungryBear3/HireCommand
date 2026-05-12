@@ -227,7 +227,13 @@ export const settings = pgTable("settings", {
 });
 
 // Insert schemas
-export const insertUserSchema = createInsertSchema(users).pick({ username: true, password: true });
+export const insertUserSchema = createInsertSchema(users).pick({
+  username: true,
+  password: true,
+  email: true,
+  role: true,
+  recruiterName: true,
+});
 export const insertCandidateSchema = createInsertSchema(candidates).omit({ id: true });
 export const schedulingSessions = pgTable("scheduling_sessions", {
   id: serial("id").primaryKey(),
