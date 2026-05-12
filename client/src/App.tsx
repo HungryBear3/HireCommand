@@ -26,6 +26,7 @@ import Source from "@/pages/source";
 import Invoices from "@/pages/invoices";
 import Scheduling from "@/pages/scheduling";
 import TalentRediscovery from "@/pages/rediscovery";
+import CandidateEvaluation from "@/pages/candidate-evaluation";
 import Login from "@/pages/login";
 import { useCurrentUser } from "@/lib/auth";
 
@@ -49,6 +50,7 @@ function AppRouter() {
       <Route path="/settings" component={Settings} />
       <Route path="/scheduling" component={Scheduling} />
       <Route path="/rediscovery" component={TalentRediscovery} />
+      <Route path="/candidate-evaluation" component={CandidateEvaluation} />
       <Route component={NotFound} />
     </Switch>
   );

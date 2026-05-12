@@ -62,6 +62,21 @@ const statusColors: Record<string, string> = {
   placed: "bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400",
 };
 
+type CandidateJobFile = Job & {
+  assignmentStatus?: string;
+  evaluationScore?: number | null;
+  evaluationVerdict?: string | null;
+  evaluationSummary?: string | null;
+  evaluatedAt?: string | null;
+};
+
+function evaluationBadgeTone(score?: number | null) {
+  if (typeof score !== "number") return "bg-muted text-muted-foreground border-border";
+  if (score >= 75) return "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
+  if (score >= 50) return "bg-amber-500/10 text-amber-600 border-amber-500/20";
+  return "bg-red-500/10 text-red-600 border-red-500/20";
+}
+
 const FUNCTION_OPTIONS = [
   { label: "All Functions", value: "all" },
   { label: "CFO / Finance", value: "CFO / Finance", keywords: ["CFO", "VP Finance", "Finance", "Chief Financial"] },
@@ -1063,7 +1078,7 @@ function CandidateDetail({
 
   const { data: jobs = [] } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
   const activeJobs = jobs.filter((job) => job.stage !== "closed");
-  const { data: assignedJobs = [] } = useQuery<Job[]>({
+  const { data: assignedJobs = [] } = useQuery<CandidateJobFile[]>({
     queryKey: ["/api/candidates", candidate.id, "jobs"],
     queryFn: async () => {
       const res = await fetch(`/api/candidates/${candidate.id}/jobs`, { credentials: "include" });
@@ -1353,8 +1368,21 @@ function CandidateDetail({
             {assignedJobs.length > 0 ? (
               assignedJobs.map((job) => (
                 <div key={job.id} className="rounded-md border border-border px-3 py-2 text-sm">
-                  <p className="font-medium">{job.title}</p>
-                  <p className="text-xs text-muted-foreground">{job.company} · {job.stage}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium">{job.title}</p>
+                      <p className="text-xs text-muted-foreground">{job.company} · {job.assignmentStatus || job.stage}</p>
+                    </div>
+                    <Badge variant="outline" className={`shrink-0 text-[10px] ${evaluationBadgeTone(job.evaluationScore)}`}>
+                      {typeof job.evaluationScore === "number" ? `${job.evaluationScore}/100` : "No eval"}
+                    </Badge>
+                  </div>
+                  {(job.evaluationVerdict || job.evaluationSummary) && (
+                    <div className="mt-2 rounded-md bg-muted/40 p-2">
+                      {job.evaluationVerdict && <p className="text-xs font-medium">{job.evaluationVerdict}</p>}
+                      {job.evaluationSummary && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{job.evaluationSummary}</p>}
+                    </div>
+                  )}
                 </div>
               ))
             ) : (

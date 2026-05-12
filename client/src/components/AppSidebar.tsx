@@ -20,6 +20,7 @@ import {
   LogOut,
   CalendarDays,
   Sparkles,
+  BrainCircuit,
 } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,7 @@ const navItems = [
   { href: "/ai", icon: Bot, label: "AI Assistant" },
   { href: "/scheduling", icon: CalendarDays, label: "Scheduling" },
   { href: "/rediscovery", icon: Sparkles, label: "Rediscovery" },
+  { href: "/candidate-evaluation", icon: BrainCircuit, label: "AI Candidate Evaluation" },
   { href: "/interviews", icon: ClipboardList, label: "Interviews" },
   { href: "/revenue", icon: DollarSign, label: "Revenue" },
   { href: "/invoices", icon: FileText, label: "Invoices" },

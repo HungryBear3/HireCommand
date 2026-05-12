@@ -79,6 +79,11 @@ export const candidateJobAssignments = pgTable("candidate_job_assignments", {
   jobId: integer("job_id").notNull(),
   status: text("status").notNull().default("submitted"),
   notes: text("notes").notNull().default(""),
+  evaluationScore: integer("evaluation_score"),
+  evaluationVerdict: text("evaluation_verdict"),
+  evaluationSummary: text("evaluation_summary"),
+  evaluationJson: text("evaluation_json"),
+  evaluatedAt: text("evaluated_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

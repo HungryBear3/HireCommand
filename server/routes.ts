@@ -103,6 +103,34 @@ export async function registerRoutes(
   // handled before this middleware fires for those paths.
   app.use("/api", requireAuth);
 
+  // ======================== AI CANDIDATE EVALUATION ========================
+  // Browser-safe Anthropic proxy. Keep ANTHROPIC_API_KEY server-side; never ship it to the client.
+  app.post("/api/evaluate", async (req, res) => {
+    try {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: "ANTHROPIC_API_KEY is not configured on the server" });
+      }
+
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(req.body),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(data);
+      }
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Candidate evaluation failed" });
+    }
+  });
 
   // ======================== CLIENT PORTAL ========================
   // Real client portal data built from synced Loxo jobs, job-candidate assignments, and client contacts.
@@ -501,6 +529,84 @@ export async function registerRoutes(
       }
     }
     res.json(data);
+  });
+
+  app.post("/api/jobs/:jobId/candidates/:candidateId/evaluate", async (req, res) => {
+    try {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY is not configured on the server" });
+
+      const jobId = Number(req.params.jobId);
+      const candidateId = Number(req.params.candidateId);
+      const [job, candidate] = await Promise.all([storage.getJob(jobId), storage.getCandidate(candidateId)]);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (!candidate) return res.status(404).json({ error: "Candidate not found" });
+
+      const assigned = await storage.getCandidatesForJob(jobId);
+      if (!assigned.some((c) => c.id === candidateId)) {
+        return res.status(404).json({ error: "Candidate is not assigned to this job" });
+      }
+
+      let requirements: string[] = [];
+      try {
+        const parsed = JSON.parse(job.requirements || "[]");
+        requirements = Array.isArray(parsed) ? parsed : [];
+      } catch {}
+
+      let tags: string[] = [];
+      try {
+        const parsed = JSON.parse(candidate.tags || "[]");
+        tags = Array.isArray(parsed) ? parsed : [];
+      } catch {}
+
+      const system = `You are a senior executive talent evaluator with 20+ years placing C-suite and VP-level leaders. Evaluate the candidate against the specific job using rigorous, evidence-based criteria.
+
+Score across these 6 dimensions (0-100 each): Performance & Track Record, Leadership Quality, Strategic Fit, Cultural & Behavioral, Market Signals, Modern Leadership Readiness.
+
+Respond ONLY with valid JSON. No markdown fences, no preamble. Exact schema:
+{"overall_score":85,"verdict":"Strong Hire","executive_summary":"2-3 sentences covering the top fit signal and top risk.","stage_match_note":"One sentence on builder vs scaler vs turnaround fit.","dimensions":[{"name":"Performance & Track Record","score":80,"note":"25-40 word specific observation"}],"strengths":["Specific strength with evidence"],"risks":["Specific risk with reasoning"],"green_flags":["flag"],"red_flags":["flag"],"reference_check_targets":["Who to call and what to probe"],"interview_probes":["[Gap label] Behavioral question"]}`;
+
+      const userContent = `JOB:\nTitle: ${job.title}\nCompany: ${job.company}\nLocation: ${job.location}\nFee potential: ${job.feePotential}\nStage: ${job.stage}\nDescription: ${job.description}\nRequirements:\n${requirements.map((r) => `- ${r}`).join("\n") || "None provided"}\n\n---\n\nCANDIDATE FILE:\nName: ${candidate.name}\nTitle: ${candidate.title}\nCompany: ${candidate.company}\nLocation: ${candidate.location}\nEmail: ${candidate.email}\nPhone: ${candidate.phone}\nLinkedIn: ${candidate.linkedin}\nCurrent pipeline status: ${candidate.status}\nExisting match score: ${candidate.matchScore}\nTags: ${tags.join(", ") || "None"}\nNotes:\n${candidate.notes || "None"}`;
+
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: req.body?.model || "claude-sonnet-4-20250514",
+          max_tokens: req.body?.max_tokens || 1500,
+          temperature: req.body?.temperature ?? 0.2,
+          system,
+          messages: [{ role: "user", content: userContent }],
+        }),
+      });
+
+      const anthropicData = await response.json();
+      if (!response.ok) return res.status(response.status).json(anthropicData);
+
+      const rawText = Array.isArray(anthropicData?.content)
+        ? anthropicData.content.map((block: any) => typeof block?.text === "string" ? block.text : "").filter(Boolean).join("\n\n")
+        : "";
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (!match) return res.status(502).json({ error: "No JSON found in model response", raw: rawText });
+      const result = JSON.parse(match[0]);
+      const evaluatedAt = new Date().toISOString();
+      const saved = await storage.saveCandidateJobEvaluation(candidateId, jobId, {
+        score: Number.isFinite(Number(result.overall_score)) ? Number(result.overall_score) : null,
+        verdict: typeof result.verdict === "string" ? result.verdict : null,
+        summary: typeof result.executive_summary === "string" ? result.executive_summary : null,
+        json: JSON.stringify(result),
+        evaluatedAt,
+      });
+      if (!saved) return res.status(404).json({ error: "Candidate is not assigned to this job" });
+
+      res.json({ result, assignment: saved });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Job candidate evaluation failed" });
+    }
   });
 
   app.post("/api/jobs", async (req, res) => {

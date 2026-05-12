@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2, Archive, RotateCcw, CheckSquare, FileText } from "lucide-react";
+import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2, Archive, RotateCcw, CheckSquare, FileText, BrainCircuit, Sparkles } from "lucide-react";
 
 const ACTIVE_STAGES = [
   { key: "intake",     label: "Intake",     color: "bg-slate-400" },
@@ -36,11 +36,26 @@ const CANDIDATE_PIPELINE_STAGES = [
   { key: "placed", label: "Placed", color: "border-green-300 bg-green-50 dark:bg-green-950/30" },
 ];
 
-type JobCandidate = Candidate & { assignmentStatus?: string; assignmentNotes?: string };
+type JobCandidate = Candidate & {
+  assignmentStatus?: string;
+  assignmentNotes?: string;
+  evaluationScore?: number | null;
+  evaluationVerdict?: string | null;
+  evaluationSummary?: string | null;
+  evaluationJson?: string | null;
+  evaluatedAt?: string | null;
+};
 
 function candidateStage(candidate: JobCandidate) {
   const raw = candidate.assignmentStatus || candidate.status || "sourced";
   return raw === "submitted" ? "sourced" : raw;
+}
+
+function evaluationTone(score?: number | null) {
+  if (typeof score !== "number") return "bg-muted text-muted-foreground border-border";
+  if (score >= 75) return "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
+  if (score >= 50) return "bg-amber-500/10 text-amber-600 border-amber-500/20";
+  return "bg-red-500/10 text-red-600 border-red-500/20";
 }
 
 interface JobForm {
@@ -595,6 +610,20 @@ export default function Jobs() {
     onError: (e: Error) => toast({ title: "Could not update stage", description: e.message, variant: "destructive" }),
   });
 
+  const evaluateCandidateMutation = useMutation({
+    mutationFn: async ({ candidateId, jobId }: { candidateId: number; jobId: number }) => {
+      const res = await apiRequest("POST", `/api/jobs/${jobId}/candidates/${candidateId}/evaluate`, {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs", selectedJob?.id, "candidates"] });
+      const score = data?.result?.overall_score;
+      const verdict = data?.result?.verdict;
+      toast({ title: "Evaluation attached", description: verdict ? `${verdict}${score ? ` · ${score}/100` : ""}` : "Saved to the candidate's job file." });
+    },
+    onError: (e: Error) => toast({ title: "Could not evaluate candidate", description: e.message, variant: "destructive" }),
+  });
+
   const moveCandidateToStage = (candidate: JobCandidate, status: string) => {
     if (!selectedJob || candidateStage(candidate) === status) return;
     updateCandidateStageMutation.mutate({ candidateId: candidate.id, jobId: selectedJob.id, status });
@@ -933,6 +962,28 @@ export default function Jobs() {
                                     <option key={option.key} value={option.key}>{option.label}</option>
                                   ))}
                                 </select>
+                              </div>
+                              <div className="mt-2 space-y-1.5 rounded-md border border-border/70 bg-muted/20 p-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <Badge variant="outline" className={`h-5 px-1.5 text-[10px] ${evaluationTone(candidate.evaluationScore)}`}>
+                                    {typeof candidate.evaluationScore === "number" ? `${candidate.evaluationScore}/100` : "Not evaluated"}
+                                  </Badge>
+                                  {candidate.evaluationVerdict && <span className="truncate text-[10px] font-medium text-muted-foreground">{candidate.evaluationVerdict}</span>}
+                                </div>
+                                {candidate.evaluationSummary && (
+                                  <p className="line-clamp-3 text-[10px] leading-snug text-muted-foreground">{candidate.evaluationSummary}</p>
+                                )}
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={candidate.evaluatedAt ? "outline" : "secondary"}
+                                  className="h-7 w-full gap-1.5 text-[11px]"
+                                  disabled={!selectedJob || evaluateCandidateMutation.isPending}
+                                  onClick={() => selectedJob && evaluateCandidateMutation.mutate({ candidateId: candidate.id, jobId: selectedJob.id })}
+                                >
+                                  {evaluateCandidateMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : candidate.evaluatedAt ? <Sparkles size={12} /> : <BrainCircuit size={12} />}
+                                  {candidate.evaluatedAt ? "Re-evaluate" : "Evaluate fit"}
+                                </Button>
                               </div>
                             </div>
                           ))}

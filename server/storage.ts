@@ -45,11 +45,21 @@ async function ensureRuntimeSchema() {
       job_id integer NOT NULL,
       status text NOT NULL DEFAULT 'submitted',
       notes text NOT NULL DEFAULT '',
+      evaluation_score integer,
+      evaluation_verdict text,
+      evaluation_summary text,
+      evaluation_json text,
+      evaluated_at text,
       created_at text NOT NULL,
       updated_at text NOT NULL,
       UNIQUE(candidate_id, job_id)
     )
   `);
+  await db.execute(sql`ALTER TABLE candidate_job_assignments ADD COLUMN IF NOT EXISTS evaluation_score integer`);
+  await db.execute(sql`ALTER TABLE candidate_job_assignments ADD COLUMN IF NOT EXISTS evaluation_verdict text`);
+  await db.execute(sql`ALTER TABLE candidate_job_assignments ADD COLUMN IF NOT EXISTS evaluation_summary text`);
+  await db.execute(sql`ALTER TABLE candidate_job_assignments ADD COLUMN IF NOT EXISTS evaluation_json text`);
+  await db.execute(sql`ALTER TABLE candidate_job_assignments ADD COLUMN IF NOT EXISTS evaluated_at text`);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS loxo_companies (
       id serial PRIMARY KEY,
@@ -94,10 +104,11 @@ export interface IStorage {
   updateCandidate(id: number, c: Partial<InsertCandidate>): Promise<Candidate | undefined>;
   deleteCandidate(id: number): Promise<void>;
   mergeCandidates(primaryId: number, duplicateIds: number[]): Promise<{ primary: Candidate; mergedIds: number[] }>;
-  getCandidateJobs(candidateId: number): Promise<Job[]>;
-  getCandidatesForJob(jobId: number): Promise<(Candidate & { assignmentStatus?: string; assignmentNotes?: string })[]>;
+  getCandidateJobs(candidateId: number): Promise<(Job & { assignmentStatus?: string; evaluationScore?: number | null; evaluationVerdict?: string | null; evaluationSummary?: string | null; evaluationJson?: string | null; evaluatedAt?: string | null })[]>;
+  getCandidatesForJob(jobId: number): Promise<(Candidate & { assignmentStatus?: string; assignmentNotes?: string; evaluationScore?: number | null; evaluationVerdict?: string | null; evaluationSummary?: string | null; evaluationJson?: string | null; evaluatedAt?: string | null })[]>;
   addCandidateToJob(candidateId: number, jobId: number): Promise<CandidateJobAssignment>;
   updateCandidateJobStatus(candidateId: number, jobId: number, status: string): Promise<CandidateJobAssignment | undefined>;
+  saveCandidateJobEvaluation(candidateId: number, jobId: number, evaluation: { score?: number | null; verdict?: string | null; summary?: string | null; json: string; evaluatedAt: string }): Promise<CandidateJobAssignment | undefined>;
   removeCandidateFromJob(candidateId: number, jobId: number): Promise<void>;
   getJobs(): Promise<Job[]>;
   getJob(id: number): Promise<Job | undefined>;
@@ -278,11 +289,19 @@ export class DatabaseStorage implements IStorage {
 
   async getCandidateJobs(candidateId: number) {
     const rows = await db
-      .select({ job: jobs })
+      .select({ job: jobs, assignment: candidateJobAssignments })
       .from(candidateJobAssignments)
       .innerJoin(jobs, eq(candidateJobAssignments.jobId, jobs.id))
       .where(eq(candidateJobAssignments.candidateId, candidateId));
-    return rows.map((row) => row.job);
+    return rows.map((row) => ({
+      ...row.job,
+      assignmentStatus: row.assignment.status,
+      evaluationScore: row.assignment.evaluationScore,
+      evaluationVerdict: row.assignment.evaluationVerdict,
+      evaluationSummary: row.assignment.evaluationSummary,
+      evaluationJson: row.assignment.evaluationJson,
+      evaluatedAt: row.assignment.evaluatedAt,
+    }));
   }
   async getCandidatesForJob(jobId: number) {
     const rows = await db
@@ -294,6 +313,11 @@ export class DatabaseStorage implements IStorage {
       ...row.candidate,
       assignmentStatus: row.assignment.status,
       assignmentNotes: row.assignment.notes,
+      evaluationScore: row.assignment.evaluationScore,
+      evaluationVerdict: row.assignment.evaluationVerdict,
+      evaluationSummary: row.assignment.evaluationSummary,
+      evaluationJson: row.assignment.evaluationJson,
+      evaluatedAt: row.assignment.evaluatedAt,
     }));
   }
   async addCandidateToJob(candidateId: number, jobId: number) {
@@ -321,6 +345,21 @@ export class DatabaseStorage implements IStorage {
     const rows = await db
       .update(candidateJobAssignments)
       .set({ status, updatedAt: now })
+      .where(and(eq(candidateJobAssignments.candidateId, candidateId), eq(candidateJobAssignments.jobId, jobId)))
+      .returning();
+    return rows[0];
+  }
+  async saveCandidateJobEvaluation(candidateId: number, jobId: number, evaluation: { score?: number | null; verdict?: string | null; summary?: string | null; json: string; evaluatedAt: string }) {
+    const rows = await db
+      .update(candidateJobAssignments)
+      .set({
+        evaluationScore: evaluation.score ?? null,
+        evaluationVerdict: evaluation.verdict ?? null,
+        evaluationSummary: evaluation.summary ?? null,
+        evaluationJson: evaluation.json,
+        evaluatedAt: evaluation.evaluatedAt,
+        updatedAt: evaluation.evaluatedAt,
+      })
       .where(and(eq(candidateJobAssignments.candidateId, candidateId), eq(candidateJobAssignments.jobId, jobId)))
       .returning();
     return rows[0];
