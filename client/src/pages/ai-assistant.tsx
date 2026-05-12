@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,60 +22,6 @@ interface CandidateCard {
   reason: string;
 }
 
-const sampleConversation: Message[] = [
-  {
-    role: "user",
-    content: "Who are my strongest CFO candidates for the Acme Corp search?",
-  },
-  {
-    role: "assistant",
-    content: "Based on the Acme Health Solutions CFO requirements (PE-backed healthcare, $400M revenue, exit prep), here are your top 3 matches:",
-    cards: [
-      {
-        name: "Sarah Chen",
-        title: "CFO — Meridian Health Partners",
-        score: 96,
-        reason: "Led $200M debt refinancing. Direct PE healthcare experience. Currently in 2nd interview stage.",
-      },
-      {
-        name: "Jennifer Park",
-        title: "CFO — Summit Capital Portfolio Co",
-        score: 94,
-        reason: "Managed PE exit at $800M valuation. Strong turnaround and cost optimization track record.",
-      },
-      {
-        name: "Patricia Huang",
-        title: "CFO — Vanguard Industrial Solutions",
-        score: 93,
-        reason: "Led 3 successful PE exits. Exceptional carve-out experience, though in industrial rather than healthcare.",
-      },
-    ],
-  },
-  {
-    role: "user",
-    content: "Draft an outreach email to Sarah Chen about the CFO role",
-  },
-  {
-    role: "assistant",
-    content: "Here's a personalized outreach draft based on Sarah's background and the Acme Health role:",
-    email: `Subject: Confidential CFO Opportunity — PE-Backed Healthcare IT ($400M Revenue)
-
-Hi Sarah,
-
-I hope this finds you well. I've been following Meridian Health Partners' impressive growth, and your work on the $200M debt refinancing caught my attention.
-
-I'm working exclusively with a Thoma Bravo portfolio company in the healthcare IT space — $400M in revenue, growing rapidly, and preparing for a potential exit within 18-24 months. They're seeking a CFO who brings exactly the kind of PE-backed healthcare finance leadership you've demonstrated at Meridian.
-
-Given your experience with complex capital structures and your Deloitte advisory background, I believe this could be a compelling next chapter. The compensation package is highly competitive with significant equity upside tied to the exit.
-
-Would you be open to a confidential conversation this week? I can share more details about the specific opportunity and the PE sponsor's value creation thesis.
-
-Best regards,
-Andrew
-The Hiring Advisors`,
-  },
-];
-
 const suggestionChips = [
   { label: "Find candidates", icon: Users },
   { label: "Draft outreach", icon: Mail },
@@ -83,21 +30,47 @@ const suggestionChips = [
 ];
 
 export default function AIAssistant() {
-  const [messages, setMessages] = useState<Message[]>(sampleConversation);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: "assistant",
+      content: "Ask me to search candidates, summarize pipeline, find client contacts, prep for interviews, or draft outreach from live CRM data.",
+    },
+  ]);
   const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
   const { listening, toggle: toggleVoice } = useVoiceInput((text) => setInput(text));
 
-  const handleSend = () => {
-    if (!input.trim()) return;
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: input },
-      {
-        role: "assistant",
-        content: "I'm analyzing your request across your CRM data, candidate pipeline, and activity history. In the full version, I would provide real-time insights powered by your complete recruitment database.",
-      },
-    ]);
+  const handleSend = async () => {
+    const message = input.trim();
+    if (!message || isSending) return;
+
+    setMessages((prev) => [...prev, { role: "user", content: message }]);
     setInput("");
+    setIsSending(true);
+
+    try {
+      const response = await apiRequest("POST", "/api/ai-assistant", { message });
+      const data = await response.json();
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: data.content || "I searched the CRM, but did not get a usable response.",
+          cards: data.cards,
+          email: data.email,
+        },
+      ]);
+    } catch (error: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: error?.message || "AI assistant request failed. Please try again.",
+        },
+      ]);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -211,7 +184,7 @@ export default function AIAssistant() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder="Ask about your candidates, pipeline, or business..."
+            placeholder={isSending ? "Searching live CRM data..." : "Ask about your candidates, pipeline, or business..."}
             className="pr-10"
             data-testid="input-ai-chat"
           />
@@ -227,7 +200,7 @@ export default function AIAssistant() {
             <Mic size={14} />
           </button>
         </div>
-        <Button onClick={handleSend} size="icon" data-testid="button-send-message">
+        <Button onClick={handleSend} size="icon" data-testid="button-send-message" disabled={isSending || !input.trim()}>
           <Send size={16} />
         </Button>
       </div>

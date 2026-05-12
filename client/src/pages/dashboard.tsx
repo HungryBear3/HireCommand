@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useCurrentUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -24,7 +25,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
-import type { Activity } from "@shared/schema";
+import type { Activity, Interview } from "@shared/schema";
 
 const iconMap: Record<string, typeof Mail> = {
   email: Mail,
@@ -44,49 +45,45 @@ export default function Dashboard() {
     queryKey: ["/api/activities"],
   });
 
+  const { data: interviews = [] } = useQuery<Interview[]>({
+    queryKey: ["/api/interviews"],
+  });
+
+  const { data: currentUser } = useCurrentUser();
+
   const kpis = [
-    { label: "Active Jobs", value: stats?.activeJobs ?? 12, icon: Briefcase, color: "text-blue-500" },
-    { label: "Pipeline Candidates", value: stats?.pipelineCandidates ?? 1240, icon: Users, color: "text-cyan-500" },
-    { label: "Interviews This Week", value: stats?.interviewsThisWeek ?? 14, icon: Calendar, color: "text-teal-500" },
-    { label: "Placements MTD", value: stats?.placementsMTD ?? 5, icon: Trophy, color: "text-amber-500" },
-    { label: "Revenue MTD", value: stats?.revenueMTD ?? "$215K", icon: DollarSign, color: "text-green-500" },
-    { label: "Avg Time-to-Fill", value: `${stats?.avgTimeToFill ?? 32} days`, icon: Clock, color: "text-purple-500" },
+    { label: "Active Jobs", value: stats?.activeJobs ?? "—", icon: Briefcase, color: "text-blue-500" },
+    { label: "Pipeline Candidates", value: stats?.pipelineCandidates ?? "—", icon: Users, color: "text-cyan-500" },
+    { label: "Interviews This Week", value: stats?.interviewsThisWeek ?? "—", icon: Calendar, color: "text-teal-500" },
+    { label: "Placements MTD", value: stats?.placementsMTD ?? "—", icon: Trophy, color: "text-amber-500" },
+    { label: "Revenue MTD", value: stats?.revenueMTD ?? "—", icon: DollarSign, color: "text-green-500" },
+    { label: "Avg Time-to-Fill", value: stats ? `${stats.avgTimeToFill} days` : "—", icon: Clock, color: "text-purple-500" },
   ];
 
-  const pipelineData = stats?.pipeline
-    ? [
-        { stage: "Sourced", count: stats.pipeline.sourced, fill: "hsl(217, 91%, 60%)" },
-        { stage: "Contacted", count: stats.pipeline.contacted, fill: "hsl(199, 89%, 48%)" },
-        { stage: "Screening", count: stats.pipeline.screening, fill: "hsl(168, 76%, 42%)" },
-        { stage: "Interview", count: stats.pipeline.interview, fill: "hsl(43, 96%, 50%)" },
-        { stage: "Offer", count: stats.pipeline.offer, fill: "hsl(262, 83%, 58%)" },
-        { stage: "Placed", count: stats.pipeline.placed, fill: "hsl(142, 71%, 45%)" },
-      ]
-    : [
-        { stage: "Sourced", count: 60, fill: "hsl(217, 91%, 60%)" },
-        { stage: "Contacted", count: 48, fill: "hsl(199, 89%, 48%)" },
-        { stage: "Screening", count: 30, fill: "hsl(168, 76%, 42%)" },
-        { stage: "Interview", count: 15, fill: "hsl(43, 96%, 50%)" },
-        { stage: "Offer", count: 3, fill: "hsl(262, 83%, 58%)" },
-        { stage: "Placed", count: 3, fill: "hsl(142, 71%, 45%)" },
-      ];
-
-  const upcomingInterviews = [
-    { name: "Sarah Chen", role: "CFO — Acme Health", time: "Tomorrow, 2:30 PM", type: "Second Interview" },
-    { name: "Alex Rivera", role: "CTO — BrightPath Health", time: "Jan 17, 10:00 AM", type: "Technical Deep-Dive" },
-    { name: "Marcus Williams", role: "COO — CarePoint Health", time: "Jan 17, 1:00 PM", type: "PE Partner Interview" },
-    { name: "Jordan Blake", role: "CMO — VitalWell Consumer", time: "Jan 17, 3:00 PM", type: "First Interview" },
+  const pipelineData = [
+    { stage: "Sourced", count: stats?.pipeline?.sourced ?? 0, fill: "hsl(217, 91%, 60%)" },
+    { stage: "Contacted", count: stats?.pipeline?.contacted ?? 0, fill: "hsl(199, 89%, 48%)" },
+    { stage: "Screening", count: stats?.pipeline?.screening ?? 0, fill: "hsl(168, 76%, 42%)" },
+    { stage: "Interview", count: stats?.pipeline?.interview ?? 0, fill: "hsl(43, 96%, 50%)" },
+    { stage: "Offer", count: stats?.pipeline?.offer ?? 0, fill: "hsl(262, 83%, 58%)" },
+    { stage: "Placed", count: stats?.pipeline?.placed ?? 0, fill: "hsl(142, 71%, 45%)" },
   ];
+
+  const upcomingInterviews = interviews
+    .filter((interview) => new Date(interview.interviewDate).getTime() >= Date.now())
+    .sort((a, b) => new Date(a.interviewDate).getTime() - new Date(b.interviewDate).getTime())
+    .slice(0, 4);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const displayName = currentUser?.recruiterName || currentUser?.username || "there";
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="font-display font-bold text-xl text-foreground" data-testid="text-greeting">
-          {greeting}, Andrew
+          {greeting}, {displayName}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
           Here's your recruitment command center for today.
@@ -146,18 +143,27 @@ export default function Dashboard() {
             <CardTitle className="text-sm font-semibold">Upcoming Interviews</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {upcomingInterviews.map((interview, i) => (
-              <div key={i} className="flex items-start gap-3 pb-3 border-b border-border last:border-0 last:pb-0">
+            {upcomingInterviews.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No upcoming interviews scheduled.</p>
+            ) : upcomingInterviews.map((interview) => (
+              <div key={interview.id} className="flex items-start gap-3 pb-3 border-b border-border last:border-0 last:pb-0">
                 <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
                   <Calendar size={14} className="text-primary" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{interview.name}</p>
-                  <p className="text-xs text-muted-foreground">{interview.role}</p>
+                  <p className="text-sm font-medium truncate">{interview.candidateName}</p>
+                  <p className="text-xs text-muted-foreground">{interview.jobTitle} — {interview.jobCompany}</p>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-primary font-medium">{interview.time}</span>
+                    <span className="text-xs text-primary font-medium">
+                      {new Date(interview.interviewDate).toLocaleString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </span>
                     <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-                      {interview.type}
+                      {interview.interviewType.replace(/_/g, " ")}
                     </Badge>
                   </div>
                 </div>
@@ -174,7 +180,9 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {activities.slice(0, 5).map((activity) => {
+            {activities.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No recent activity recorded.</p>
+            ) : activities.slice(0, 5).map((activity) => {
               const Icon = iconMap[activity.type] || FileText;
               return (
                 <div key={activity.id} className="flex items-start gap-3 pb-3 border-b border-border last:border-0 last:pb-0">

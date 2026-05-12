@@ -10,6 +10,7 @@ import { registerLinkedInSyncRoutes, checkAndRunStartupSync } from "./linkedin-s
 import { registerCandidateImportRoutes } from "./candidate-import";
 import { registerSchedulingRoutes } from "./scheduling";
 import { registerRediscoveryRoutes, sourceCandidatesForJob } from "./rediscovery";
+import { callClaude } from "./ai";
 import { insertInvoiceSchema } from "@shared/schema";
 import passport from "passport";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
@@ -102,6 +103,154 @@ export async function registerRoutes(
   // /api/health, /api/login, /api/logout, /api/me are registered above and
   // handled before this middleware fires for those paths.
   app.use("/api", requireAuth);
+
+  // ======================== AI ASSISTANT ========================
+  app.post("/api/ai-assistant", async (req, res) => {
+    try {
+      const query = String(req.body?.message || "").trim();
+      if (!query) return res.status(400).json({ error: "Message is required" });
+
+      const [allCandidates, allJobs, allActivities, allInterviews, allPlacements, allCompanies, allClients] = await Promise.all([
+        storage.getCandidates(),
+        storage.getJobs(),
+        storage.getActivities(),
+        storage.getInterviews(),
+        storage.getPlacements(),
+        storage.getLoxoCompanies(),
+        storage.getLoxoClients(),
+      ]);
+
+      const terms = query.toLowerCase().split(/[^a-z0-9@.]+/).filter((term) => term.length > 2);
+      const scoreText = (value: string) => terms.reduce((score, term) => score + (value.toLowerCase().includes(term) ? 1 : 0), 0);
+      const parseJsonArray = (raw: string) => {
+        try {
+          const parsed = JSON.parse(raw || "[]");
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return raw ? raw.split(",").map((item) => item.trim()).filter(Boolean) : [];
+        }
+      };
+
+      const candidateMatches = allCandidates
+        .map((candidate) => ({
+          candidate,
+          score: scoreText([
+            candidate.name,
+            candidate.title,
+            candidate.company,
+            candidate.location,
+            candidate.status,
+            candidate.notes,
+            parseJsonArray(candidate.tags).join(" "),
+          ].join(" ")) + (candidate.matchScore || 0) / 100,
+        }))
+        .filter((item) => item.score > 0 || terms.length === 0)
+        .sort((a, b) => b.score - a.score || (b.candidate.matchScore || 0) - (a.candidate.matchScore || 0))
+        .slice(0, 8)
+        .map(({ candidate }) => candidate);
+
+      const jobMatches = allJobs
+        .map((job) => ({ job, score: scoreText([job.title, job.company, job.location, job.stage, job.description, job.requirements].join(" ")) }))
+        .filter((item) => item.score > 0 || terms.length === 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 6)
+        .map(({ job }) => job);
+
+      const clientMatches = allClients
+        .map((client) => ({ client, score: scoreText([client.name, client.company, client.title, client.location, client.email].join(" ")) }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 6)
+        .map(({ client }) => client);
+
+      const snapshot = {
+        totals: {
+          candidates: allCandidates.length,
+          jobs: allJobs.length,
+          activities: allActivities.length,
+          interviews: allInterviews.length,
+          placements: allPlacements.length,
+          companies: allCompanies.length,
+          clientContacts: allClients.length,
+        },
+        candidates: candidateMatches.map((c) => ({
+          id: c.id,
+          name: c.name,
+          title: c.title,
+          company: c.company,
+          location: c.location,
+          status: c.status,
+          matchScore: c.matchScore,
+          lastContact: c.lastContact,
+          tags: parseJsonArray(c.tags),
+          notes: c.notes,
+        })),
+        jobs: jobMatches.map((j) => ({
+          id: j.id,
+          title: j.title,
+          company: j.company,
+          location: j.location,
+          stage: j.stage,
+          candidateCount: j.candidateCount,
+          daysOpen: j.daysOpen,
+          feePotential: j.feePotential,
+          requirements: parseJsonArray(j.requirements),
+        })),
+        clientContacts: clientMatches.map((c) => ({ id: c.id, name: c.name, company: c.company, title: c.title, email: c.email, phone: c.phone, location: c.location })),
+        recentActivities: allActivities.slice(0, 12),
+        upcomingInterviews: allInterviews
+          .filter((i) => new Date(i.interviewDate).getTime() >= Date.now())
+          .sort((a, b) => new Date(a.interviewDate).getTime() - new Date(b.interviewDate).getTime())
+          .slice(0, 8),
+        recentPlacements: allPlacements.slice(0, 8),
+      };
+
+      const fallbackResponse = () => {
+        const lines = [
+          `I searched the live CRM data: ${allCandidates.length} candidates, ${allJobs.length} jobs, ${allCompanies.length} companies, and ${allClients.length} client contacts.`,
+        ];
+        if (candidateMatches.length) {
+          lines.push(`Top candidate matches: ${candidateMatches.slice(0, 5).map((c) => `${c.name} (${c.title}, ${c.company}, ${c.status}, ${c.matchScore}% match)`).join("; ")}.`);
+        }
+        if (jobMatches.length) {
+          lines.push(`Relevant searches/jobs: ${jobMatches.slice(0, 4).map((j) => `${j.title} at ${j.company} (${j.stage})`).join("; ")}.`);
+        }
+        if (clientMatches.length) {
+          lines.push(`Relevant client contacts: ${clientMatches.slice(0, 4).map((c) => `${c.name}${c.title ? `, ${c.title}` : ""} at ${c.company}`).join("; ")}.`);
+        }
+        if (lines.length === 1) lines.push("I did not find a direct match for those terms. Try a candidate name, company, role title, status, or location.");
+        return {
+          content: lines.join("\n\n"),
+          cards: candidateMatches.slice(0, 5).map((c) => ({
+            name: c.name,
+            title: `${c.title} — ${c.company}`,
+            score: c.matchScore || 0,
+            reason: [c.status, c.location, c.notes].filter(Boolean).join(" • ").slice(0, 220),
+          })),
+        };
+      };
+
+      try {
+        const wantsEmail = /\b(email|outreach|draft|message|linkedin note)\b/i.test(query);
+        const content = await callClaude(
+          `User request: ${query}\n\nLive CRM snapshot:\n${JSON.stringify(snapshot, null, 2)}\n\nAnswer using only this live CRM snapshot. Be concise, specific, and useful. If drafting outreach, include a ready-to-send draft and mention which CRM record it is based on. Do not claim access to data not shown.`,
+          "You are HireCommand's AI recruiting assistant. You analyze live CRM data for executive recruiters. Never say 'in the full version'. Never use sample/demo data. If data is thin, say exactly what is missing and provide the best answer from available records.",
+          wantsEmail ? 1800 : 1200,
+        );
+        const cards = candidateMatches.slice(0, 5).map((c) => ({
+          name: c.name,
+          title: `${c.title} — ${c.company}`,
+          score: c.matchScore || 0,
+          reason: [c.status, c.location, c.notes].filter(Boolean).join(" • ").slice(0, 220),
+        }));
+        res.json({ content, cards });
+      } catch (aiError: any) {
+        res.json({ ...fallbackResponse(), warning: aiError?.message || "AI model unavailable; returned live CRM search results instead." });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "AI assistant failed" });
+    }
+  });
 
   // ======================== AI CANDIDATE EVALUATION ========================
   // Browser-safe Anthropic proxy. Keep ANTHROPIC_API_KEY server-side; never ship it to the client.
@@ -1043,11 +1192,24 @@ Respond ONLY with valid JSON. No markdown fences, no preamble. Exact schema:
 
     try {
       const seenCompanyKeys = new Set<string>();
+      const seenClientKeys = new Set<string>();
       const companyKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
-      const syntheticCompanyId = (name: string) => {
+      const syntheticLoxoId = (key: string) => {
         let hash = 0;
-        for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+        for (let i = 0; i < key.length; i++) hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
         return -Math.max(1, Math.abs(hash));
+      };
+      const syntheticCompanyId = (name: string) => syntheticLoxoId(`company:${name}`);
+      const syntheticClientId = (rawContact: any, fallbackCompany = "") => {
+        const key = [
+          "client-contact",
+          fallbackCompany,
+          loxoName(rawContact),
+          loxoEmail(rawContact),
+          loxoPhone(rawContact),
+          rawContact?.linkedin_url || rawContact?.linkedin || "",
+        ].map((part) => String(part || "").trim().toLowerCase()).join(":");
+        return syntheticLoxoId(key);
       };
       const companyNameFrom = (value: any): string => {
         if (!value) return "";
@@ -1076,24 +1238,94 @@ Respond ONLY with valid JSON. No markdown fences, no preamble. Exact schema:
         if (firstSeenThisRun) totalCompanies++;
         return firstSeenThisRun;
       };
-      const syncClientContactFromLoxo = async (rawContact: any) => {
-        if (!rawContact?.id) return false;
+      const syncClientContactFromLoxo = async (rawContact: any, fallbackCompanyName = "") => {
+        if (!rawContact) return false;
         const name = loxoName(rawContact);
         if (!name) return false;
+        const company = loxoCompanyName(rawContact) || fallbackCompanyName;
+        const loxoId = Number(rawContact.id) || syntheticClientId(rawContact, company);
+        const clientKey = String(loxoId);
+        const firstSeenThisRun = !seenClientKeys.has(clientKey);
+        if (firstSeenThisRun) seenClientKeys.add(clientKey);
+
         await storage.upsertLoxoClient({
-          loxoId: Number(rawContact.id),
+          loxoId,
           name,
-          company: loxoCompanyName(rawContact),
-          title: rawContact.title || rawContact.current_title || rawContact.job_title || "",
+          company,
+          title: rawContact.title || rawContact.current_title || rawContact.job_title || rawContact.position || "",
           email: loxoEmail(rawContact),
           phone: loxoPhone(rawContact),
           location: loxoLocation(rawContact),
-          rawJson: JSON.stringify(rawContact),
+          rawJson: JSON.stringify({ ...rawContact, _fallbackCompanyName: fallbackCompanyName || undefined }),
           syncedAt: new Date().toISOString(),
         });
-        await syncCompanyFromLoxo(rawContact.company || rawContact.current_company || rawContact.company_name || rawContact.client_company || rawContact.client_company_name, loxoCompanyName(rawContact));
-        totalClients++;
-        return true;
+        await syncCompanyFromLoxo(rawContact.company || rawContact.current_company || rawContact.company_name || rawContact.client_company || rawContact.client_company_name || company, company);
+        if (firstSeenThisRun) totalClients++;
+        return firstSeenThisRun;
+      };
+      const companyContactsFrom = (company: any): any[] => {
+        const contactKeys = ["contacts", "clients", "client_contacts", "people", "hiring_managers", "owners"];
+        for (const key of contactKeys) {
+          if (Array.isArray(company?.[key])) return company[key];
+          if (Array.isArray(company?.data?.[key])) return company.data[key];
+        }
+        return [];
+      };
+      const fetchLoxoJson = async (path: string): Promise<any | null> => {
+        const r = await fetch(`${LOXO_BASE}/${slug}/${path}`, {
+          headers: { Authorization: `Token ${apiKey}` },
+        });
+        if (r.status === 404) return null;
+        if (!r.ok) return null;
+        return r.json();
+      };
+      const syncEmbeddedCompanyContacts = async (rawCompany: any, fallbackCompanyName = "") => {
+        const companyName = companyNameFrom(rawCompany) || fallbackCompanyName;
+        const contacts = companyContactsFrom(rawCompany);
+        for (const contact of contacts) {
+          await syncClientContactFromLoxo(
+            { ...contact, company: contact.company || contact.company_name || contact.client_company || rawCompany },
+            companyName,
+          );
+        }
+        return contacts.length;
+      };
+      const syncCompanyContactsFromLoxo = async (rawCompany: any, endpoint = "companies") => {
+        const companyName = companyNameFrom(rawCompany);
+        let contactCount = await syncEmbeddedCompanyContacts(rawCompany, companyName);
+        const companyId = rawCompany?.id;
+        if (!companyId) return contactCount;
+
+        // Company list rows often omit contacts. Pull the company detail and common
+        // nested contact collections so client/company contacts are not lost.
+        const detail = await fetchLoxoJson(`${endpoint}/${companyId}`)
+          || (endpoint !== "companies" ? await fetchLoxoJson(`companies/${companyId}`) : null);
+        if (detail) {
+          const detailCompany = detail.company || detail.client_company || detail.data || detail;
+          await syncCompanyFromLoxo(detailCompany, companyName);
+          contactCount += await syncEmbeddedCompanyContacts(detailCompany, companyName);
+        }
+
+        for (const nestedPath of [
+          `${endpoint}/${companyId}/contacts`,
+          `${endpoint}/${companyId}/people`,
+          `${endpoint}/${companyId}/clients`,
+          `companies/${companyId}/contacts`,
+          `companies/${companyId}/people`,
+          `companies/${companyId}/clients`,
+        ]) {
+          const data = await fetchLoxoJson(`${nestedPath}?per_page=100`);
+          if (!data) continue;
+          const contacts = loxoList(data, ["contacts", "clients", "client_contacts", "people"]);
+          for (const contact of contacts) {
+            await syncClientContactFromLoxo(
+              { ...contact, company: contact.company || contact.company_name || contact.client_company || rawCompany },
+              companyName,
+            );
+          }
+          contactCount += contacts.length;
+        }
+        return contactCount;
       };
       const isLikelyClientContact = (record: any): boolean => {
         const raw = [record.type, record.person_type, record.category, record.role, record.contact_type, record.kind, record.status?.name]
@@ -1285,8 +1517,9 @@ Respond ONLY with valid JSON. No markdown fences, no preamble. Exact schema:
           if (records.length === 0) break;
 
           for (const c of records) {
-            if (!c.id || !c.name) continue;
+            if (!c.id || !companyNameFrom(c)) continue;
             await syncCompanyFromLoxo(c);
+            await syncCompanyContactsFromLoxo(c, endpoint);
           }
 
           send({ phase: "companies", message: `Synced ${totalCompanies} companies...`, progress: 35 + Math.min(15, page), count: totalCompanies });
