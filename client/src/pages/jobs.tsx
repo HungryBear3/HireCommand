@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { CandidateDetail } from "./candidates";
 import { MapPin, Users, Clock, DollarSign, Briefcase, ChevronRight, Plus, Pencil, Trash2, Loader2, Archive, RotateCcw, CheckSquare, FileText, BrainCircuit, Sparkles } from "lucide-react";
 
 const ACTIVE_STAGES = [
@@ -459,6 +460,7 @@ export default function Jobs() {
   const [placementInvoiceJob, setPlacementInvoiceJob] = useState<Job | null>(null);
   const [candidateToAddId, setCandidateToAddId] = useState("");
   const [candidateSearch, setCandidateSearch] = useState("");
+  const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [draggedCandidate, setDraggedCandidate] = useState<{ candidateId: number; stage: string } | null>(null);
 
   const { data: jobs = [], isLoading } = useQuery<Job[]>({ queryKey: ["/api/jobs"] });
@@ -631,7 +633,7 @@ export default function Jobs() {
 
   const handleCandidateDrop = (status: string) => {
     if (!selectedJob || !draggedCandidate || draggedCandidate.stage === status) {
-      setDraggedCandidate(null);
+      setTimeout(() => setDraggedCandidate(null), 0);
       return;
     }
     updateCandidateStageMutation.mutate({
@@ -639,7 +641,12 @@ export default function Jobs() {
       jobId: selectedJob.id,
       status,
     });
-    setDraggedCandidate(null);
+    setTimeout(() => setDraggedCandidate(null), 0);
+  };
+
+  const openCandidateProfile = (candidate: JobCandidate) => {
+    if (draggedCandidate?.candidateId === candidate.id) return;
+    setSelectedCandidate(candidate);
   };
 
   return (
@@ -941,12 +948,14 @@ export default function Jobs() {
                             <div
                               key={candidate.id}
                               draggable={!updateCandidateStageMutation.isPending}
+                              onClick={() => openCandidateProfile(candidate)}
                               onDragStart={(e) => {
                                 e.dataTransfer.effectAllowed = "move";
                                 setDraggedCandidate({ candidateId: candidate.id, stage: candidateStage(candidate) });
                               }}
-                              onDragEnd={() => setDraggedCandidate(null)}
-                              className={`rounded-md border border-border bg-background/95 p-2 shadow-sm transition cursor-grab active:cursor-grabbing ${draggedCandidate?.candidateId === candidate.id ? "opacity-50" : "hover:border-primary/40"}`}
+                              onDragEnd={() => setTimeout(() => setDraggedCandidate(null), 0)}
+                              className={`rounded-md border border-border bg-background/95 p-2 shadow-sm transition cursor-grab active:cursor-grabbing ${draggedCandidate?.candidateId === candidate.id ? "opacity-50" : "hover:border-primary/40 hover:bg-primary/5"}`}
+                              title="Click to review candidate profile, or drag to move stages"
                             >
                               <p className="text-xs font-medium leading-tight">{candidate.name}</p>
                               <p className="text-[11px] text-muted-foreground truncate">{candidate.title || "Candidate"}</p>
@@ -954,6 +963,7 @@ export default function Jobs() {
                               <div className="mt-2">
                                 <select
                                   value={candidateStage(candidate)}
+                                  onClick={(e) => e.stopPropagation()}
                                   onChange={(e) => moveCandidateToStage(candidate, e.target.value)}
                                   className="h-7 w-full rounded-md border border-input bg-background px-1.5 text-[11px]"
                                   disabled={updateCandidateStageMutation.isPending}
@@ -979,7 +989,10 @@ export default function Jobs() {
                                   variant={candidate.evaluatedAt ? "outline" : "secondary"}
                                   className="h-7 w-full gap-1.5 text-[11px]"
                                   disabled={!selectedJob || evaluateCandidateMutation.isPending}
-                                  onClick={() => selectedJob && evaluateCandidateMutation.mutate({ candidateId: candidate.id, jobId: selectedJob.id })}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    selectedJob && evaluateCandidateMutation.mutate({ candidateId: candidate.id, jobId: selectedJob.id });
+                                  }}
                                 >
                                   {evaluateCandidateMutation.isPending ? <Loader2 size={12} className="animate-spin" /> : candidate.evaluatedAt ? <Sparkles size={12} /> : <BrainCircuit size={12} />}
                                   {candidate.evaluatedAt ? "Re-evaluate" : "Evaluate fit"}
@@ -1054,6 +1067,18 @@ export default function Jobs() {
               </div>
             );
           })()}
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={!!selectedCandidate} onOpenChange={v => !v && setSelectedCandidate(null)}>
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+          {selectedCandidate && (
+            <CandidateDetail
+              candidate={selectedCandidate}
+              onClose={() => setSelectedCandidate(null)}
+              onStatusUpdated={(updated) => setSelectedCandidate(updated)}
+            />
+          )}
         </SheetContent>
       </Sheet>
 

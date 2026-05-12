@@ -1062,7 +1062,7 @@ function LinkedInSyncBadge({
 
 // ─── CandidateDetail ─────────────────────────────────────────────────────────
 
-function CandidateDetail({
+export function CandidateDetail({
   candidate: initialCandidate,
   onClose,
   onStatusUpdated,
